@@ -32,7 +32,7 @@ CTX_LIMIT=200000
 INITIAL_PROMPT=""
 RESUME=false
 DRY_RUN=false
-CHATLOG_CMD="python -m chatlog"
+WL_CMD="python -m wormlens"
 CLAUDE_CMD="claude"
 POLL_INTERVAL=5
 
@@ -53,7 +53,7 @@ while [[ $# -gt 0 ]]; do
         --resume)        RESUME=true; shift ;;
         --dry-run)       DRY_RUN=true; shift ;;
         --poll-interval) POLL_INTERVAL="$2"; shift 2 ;;
-        --chatlog-cmd)   CHATLOG_CMD="$2"; shift 2 ;;
+        --wl-cmd)   WL_CMD="$2"; shift 2 ;;
         --claude-cmd)    CLAUDE_CMD="$2"; shift 2 ;;
         -h|--help)
             echo "wormlens v$VERSION -- Infinite session continuity for Claude Code"
@@ -66,7 +66,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --resume            Resume from last wormlens extract"
             echo "  --dry-run           Show what would happen without running"
             echo "  --poll-interval N   Monitor poll interval in seconds (default: 5)"
-            echo "  --chatlog-cmd CMD   chatlog command (default: python -m chatlog)"
+            echo "  --wl-cmd CMD   wormlens command (default: python -m wormlens)"
             echo "  --claude-cmd CMD    Claude CLI command (default: claude)"
             exit 0
             ;;
@@ -116,7 +116,7 @@ get_latest_extract() {
 
 start_monitor() {
     log "Starting context monitor (limit: ${CTX_LIMIT} tokens, poll: ${POLL_INTERVAL}s)"
-    python -m chatlog.harness.monitor \
+    python -m wormlens.harness.monitor \
         --ctx-limit "$CTX_LIMIT" \
         --status-dir "$WORMLENS_DIR" \
         --poll-interval "$POLL_INTERVAL" &
@@ -144,10 +144,10 @@ do_extract() {
     local session_num=$1
     local extract_file="$EXTRACT_DIR/session_${session_num}.md"
 
-    log "Extracting session with chatlog..."
+    log "Extracting session with wormlens..."
     mkdir -p "$EXTRACT_DIR"
 
-    $CHATLOG_CMD --full --format chat -o "$extract_file" 2>/dev/null
+    $WL_CMD --full --format chat -o "$extract_file" 2>/dev/null
 
     if [ -f "$extract_file" ] && [ -s "$extract_file" ]; then
         local size
@@ -188,7 +188,7 @@ IMPORTANT -- wormlens protocol:
 2. A context monitor is running. Check .wormlens/status periodically (read the file) to see your context fill %.
 3. When context reaches ~85-90%, YOU decide when to initiate handoff:
    a. Reach a clean stopping point in your current task
-   b. Run: $CHATLOG_CMD --full --format chat -o $EXTRACT_DIR/session_$((session_num + 1)).md
+   b. Run: $WL_CMD --full --format chat -o $EXTRACT_DIR/session_$((session_num + 1)).md
    c. Create the file .wormlens/handoff_ready
    d. Tell the user you're handing off, summarize what's pending
    e. The outer loop will restart you with full memory
@@ -210,7 +210,7 @@ WORMLENS PROTOCOL:
 1. A context monitor is running. Check .wormlens/status periodically to see your context fill %.
 2. When context reaches ~85-90%, YOU decide when to initiate handoff:
    a. Reach a clean stopping point
-   b. Run: $CHATLOG_CMD --full --format chat -o $EXTRACT_DIR/session_$((session_num + 1)).md
+   b. Run: $WL_CMD --full --format chat -o $EXTRACT_DIR/session_$((session_num + 1)).md
    c. Create the file .wormlens/handoff_ready
    d. Tell the user you're handing off
 3. The outer loop will restart you with full episodic memory from this session.

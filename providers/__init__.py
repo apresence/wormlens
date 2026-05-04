@@ -13,36 +13,59 @@ _PROVIDERS_DIR = Path(__file__).parent
 PROVIDERS: dict[str, type[Provider]] = {}
 
 
+_KNOWN_PROVIDERS = [
+    "claude_code",
+    "vscode_copilot",
+]
+
+
+def _register_module(mod):
+    for attr_name in dir(mod):
+        obj = getattr(mod, attr_name)
+        if (
+            isinstance(obj, type)
+            and issubclass(obj, Provider)
+            and obj is not Provider
+            and getattr(obj, "provider_id", "")
+        ):
+            PROVIDERS[obj.provider_id] = obj
+
+
 def _discover_providers():
     """Scan provider subdirectories and register Provider subclasses."""
-    for entry in sorted(_PROVIDERS_DIR.iterdir()):
-        if not entry.is_dir():
-            continue
-        if entry.name.startswith("_"):
-            continue
-        if not (entry / "__init__.py").is_file():
-            continue
+    try:
+        entries = sorted(_PROVIDERS_DIR.iterdir())
+    except (NotADirectoryError, OSError):
+        entries = None
 
-        module_name = f"{__package__}.{entry.name}"
-        try:
-            mod = importlib.import_module(module_name)
-        except Exception as exc:
-            print(
-                f"wormlens: warning: failed to import provider "
-                f"'{entry.name}': {exc}",
-                file=sys.stderr,
-            )
-            continue
+    if entries is not None:
+        for entry in entries:
+            if not entry.is_dir():
+                continue
+            if entry.name.startswith("_"):
+                continue
+            if not (entry / "__init__.py").is_file():
+                continue
 
-        for attr_name in dir(mod):
-            obj = getattr(mod, attr_name)
-            if (
-                isinstance(obj, type)
-                and issubclass(obj, Provider)
-                and obj is not Provider
-                and getattr(obj, "provider_id", "")
-            ):
-                PROVIDERS[obj.provider_id] = obj
+            module_name = f"{__package__}.{entry.name}"
+            try:
+                mod = importlib.import_module(module_name)
+            except Exception as exc:
+                print(
+                    f"wormlens: warning: failed to import provider "
+                    f"'{entry.name}': {exc}",
+                    file=sys.stderr,
+                )
+                continue
+            _register_module(mod)
+    else:
+        for name in _KNOWN_PROVIDERS:
+            module_name = f"{__package__}.{name}"
+            try:
+                mod = importlib.import_module(module_name)
+            except Exception:
+                continue
+            _register_module(mod)
 
 
 _discover_providers()

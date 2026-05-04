@@ -15,6 +15,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from . import __version__
 from .formatters import write_output
 from .models import FilterOpts
 from .pipeline import (
@@ -51,6 +52,8 @@ Examples:
         """,
     )
 
+    p.add_argument("--version", action="version",
+                   version=f"wormlens {__version__}")
     p.add_argument("input", nargs="*", default=None,
                    help="Input JSONL file(s), glob patterns, or directories")
     p.add_argument("--source", choices=list(PROVIDERS.keys()) + ["auto"], default="auto",
@@ -670,8 +673,13 @@ def main():
         args.compact_markers = True
 
     if args.tail is not None:
+        if args.tail <= 0:
+            parser.error("--tail requires a positive integer")
         args.rev = True
         args.n = args.tail
+
+    if args.n is not None and args.n <= 0:
+        parser.error("-n requires a positive integer")
 
     if args.rev and args.n is None:
         parser.error("--rev requires -n")

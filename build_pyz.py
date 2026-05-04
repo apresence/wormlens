@@ -14,8 +14,7 @@ import tempfile
 from pathlib import Path
 
 PACKAGE_DIR = Path(__file__).parent
-PROJECT_ROOT = PACKAGE_DIR.parent.parent
-OUTPUT = PROJECT_ROOT / ".copilot" / "wormlens.pyz"
+OUTPUT = PACKAGE_DIR / ".copilot" / "wormlens.pyz"
 
 
 def main():
