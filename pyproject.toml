@@ -10,7 +10,7 @@ readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.9"
 authors = [
-    {name = "Chris", email = "8013838+apresence@users.noreply.github.com"},
+    {name = "apresence", email = "8013838+apresence@users.noreply.github.com"},
 ]
 keywords = ["claude", "claude-code", "copilot", "chat", "extraction", "memory"]
 classifiers = [
@@ -28,6 +28,12 @@ wl = "wormlens.cli:main"
 Homepage = "https://github.com/apresence/wormlens"
 Repository = "https://github.com/apresence/wormlens"
 
-[tool.setuptools.packages.find]
-where = [".."]
-include = ["wormlens*"]
+[tool.setuptools.package-dir]
+"wormlens" = "."
+"wormlens.providers" = "providers"
+"wormlens.providers.claude_code" = "providers/claude_code"
+"wormlens.providers.vscode_copilot" = "providers/vscode_copilot"
+"wormlens.harness" = "harness"
+
+[tool.setuptools.packages]
+find = {where = ["."], namespaces = false}
