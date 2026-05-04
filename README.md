@@ -7,7 +7,7 @@ Universal chat history extraction for Claude Code and VS Code Copilot. Reads raw
 - **Instant** -- extracts in milliseconds, not minutes
 - **Lossless** -- preserves decisions, intent, and momentum the model would discard
 - **Addressable** -- turn numbers map to source lines for random-access retrieval
-- **~3 tokens/turn overhead** -- cheaper than any summary
+- **~10 tokens/turn overhead** -- cheaper than any summary
 
 ## Installation
 
