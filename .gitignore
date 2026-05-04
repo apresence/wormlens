@@ -10,3 +10,4 @@ build/
 chatlog/
 .copilot/
 *.jsonl
+*.chat
