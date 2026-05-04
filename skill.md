@@ -25,6 +25,7 @@ wl -t 20                    # last 20 messages
 wl --source vscode          # latest VS Code Copilot session
 wl --list-sessions          # list available sessions
 wl --session <UUID>         # extract specific session
+wl --recall --session <UUID> # recover prior session into context (agent use)
 wl --grep "pattern"         # search all sessions
 wl --grep "pattern" -i -B2 -A2  # case-insensitive with context
 wl --index 5-10             # extract specific turns
@@ -45,3 +46,21 @@ wl --doctor                 # diagnose environment issues
 Default chat format uses `<user turn=N>` / `<assistant turn=N>` tags. For CC sessions, turn=N is the JSONL line number -- use `sed -n 'Np' <source.jsonl>` for full-fidelity retrieval of any turn.
 
 Run `wl --help` for complete option reference.
+
+## When Running Under wormlens Harness
+
+If the wormlens harness (outer loop) is active, your system-reminders include:
+
+- **`context_used_pct`**: percentage of context window consumed (authoritative -- do not compute your own)
+- **`context_remaining_pct`**: percentage of context window remaining (authoritative)
+- **`time`**: current local time with UTC offset and day of week (authoritative -- do not guess the date or DOW)
+
+Trust these injected values. They come from CC's StatusLine hook and are accurate. Your internal date/DOW reasoning is unreliable for future dates.
+
+When `context_remaining_pct` drops below 15%, initiate a clean handoff:
+1. Finish current operation
+2. Include `<wl-summary>short session description</wl-summary>` in your response
+3. Call `wl --handoff --session <session-id>` (wl validates the summary tag exists)
+4. Tell the user you are handing off
+
+When `urgent` appears in your system-reminder, comply immediately -- do not wait for a clean stopping point.

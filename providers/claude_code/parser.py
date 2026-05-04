@@ -56,9 +56,12 @@ _CONTINUATION_PREFIX = "This session is being continued from a previous conversa
 
 def _get_projects_dir() -> Path:
     config_dir = os.environ.get("CLAUDE_CONFIG_DIR")
-    if not config_dir:
-        config_dir = str(Path.home() / ".claude")
-    return Path(config_dir) / "projects"
+    if config_dir:
+        projects = Path(config_dir) / "projects"
+        if projects.is_dir():
+            return projects
+    home = os.environ.get("HOME", str(Path.home()))
+    return Path(home) / ".claude" / "projects"
 
 
 def _all_session_jsonls() -> list[Path]:
@@ -448,6 +451,8 @@ class ClaudeCodeProvider(Provider):
             assistant_count = 0
             first_ts = None
             last_ts = None
+            preview_msgs: list[str] = []
+            wl_summary = ""
 
             with open(fpath, "rb") as f:
                 for raw_line in f:
@@ -466,8 +471,43 @@ class ClaudeCodeProvider(Provider):
                         compact_count += 1
                     elif rtype == "user":
                         user_count += 1
+                        if len(preview_msgs) < 2:
+                            if record.get("isMeta") or record.get("subtype") == "local-command":
+                                continue
+                            msg = record.get("message", {})
+                            content = msg.get("content", "")
+                            if isinstance(content, list):
+                                parts = [
+                                    b.get("text", "")
+                                    for b in content
+                                    if isinstance(b, dict) and b.get("type") == "text"
+                                ]
+                                content = " ".join(parts)
+                            if isinstance(content, str) and content.strip():
+                                line = content.strip().replace("\n", " ")[:120]
+                                if line.startswith(("<local-command", "<command-name")):
+                                    continue
+                                preview_msgs.append(line)
                     elif rtype == "assistant":
                         assistant_count += 1
+                        if not wl_summary:
+                            msg = record.get("message", {})
+                            content = msg.get("content", "")
+                            if isinstance(content, list):
+                                parts = [
+                                    b.get("text", "")
+                                    for b in content
+                                    if isinstance(b, dict) and b.get("type") == "text"
+                                ]
+                                content = " ".join(parts)
+                            if isinstance(content, str):
+                                m = re.search(
+                                    r"<wl-summary>(.*?)</wl-summary>",
+                                    content,
+                                    re.DOTALL,
+                                )
+                                if m:
+                                    wl_summary = m.group(1).strip()[:80]
 
             rows.append({
                 "session_id": fpath.stem,
@@ -479,6 +519,8 @@ class ClaudeCodeProvider(Provider):
                 "user_count": user_count,
                 "assistant_count": assistant_count,
                 "source_type": self.provider_id,
+                "preview": preview_msgs,
+                "wl_summary": wl_summary,
             })
         return rows
 

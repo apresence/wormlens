@@ -80,6 +80,10 @@ Examples:
                        help="Run diagnostics (provider imports, session discovery, env)")
     modes.add_argument("--launch", action="store_true",
                        help="Launch the wormlens outer-loop harness (placeholder)")
+    modes.add_argument("--recall", action="store_true",
+                       help="Agent recall mode: strip frontmatter, add instruction caveat, stdout")
+    modes.add_argument("--handoff", action="store_true",
+                       help="Create handoff marker from session's <wl-summary> tag (requires --session)")
 
     grep = p.add_argument_group("grep options")
     grep.add_argument("-A", "--after", type=int, default=0, metavar="N",
@@ -171,19 +175,34 @@ def _print_sessions_table(rows: list[dict]):
 
     source_type = rows[0].get("source_type", "")
 
+    has_matches = any("match_count" in r for r in rows)
+
     if source_type == "cc":
-        print(f"{'SESSION ID':<38} {'SIZE':>8} {'COMPACTS':>8} {'USER':>6} {'ASST':>6} {'START':>24} {'END':>24}")
-        print("-" * 120)
+        header = f"{'SESSION ID':<38} {'SIZE':>8} {'USER':>6} {'ASST':>6} {'START':>20}"
+        if has_matches:
+            header += f"  {'MATCHES':>7}"
+        header += "  PREVIEW"
+        print(header)
+        print("-" * (138 if has_matches else 130))
         for row in rows:
             size_kb = row["size"] / 1024
             size_str = f"{size_kb / 1024:.1f}MB" if size_kb >= 1024 else f"{size_kb:.0f}KB"
-            start = row.get("start_ts", "")[:19]
-            end = row.get("end_ts", "")[:19]
-            print(
-                f"{row['session_id']:<38} {size_str:>8} {row.get('compact_count', 0):>8} "
+            start = row.get("start_ts", "")[:16]
+            wl_summary = row.get("wl_summary", "")
+            if wl_summary:
+                preview = wl_summary
+            else:
+                preview_msgs = row.get("preview", [])
+                preview = " | ".join(preview_msgs)[:80] if preview_msgs else ""
+            line = (
+                f"{row['session_id']:<38} {size_str:>8} "
                 f"{row.get('user_count', 0):>6} {row.get('assistant_count', 0):>6} "
-                f"{start:>24} {end:>24}"
+                f"{start:>20}"
             )
+            if has_matches:
+                line += f"  {row.get('match_count', 0):>7}"
+            line += f"  {preview}"
+            print(line)
     else:
         print(f"{'SESSION ID':<38} {'SIZE':>8} {'TURNS':>6} {'TITLE':<40} {'DATE':>24}")
         print("-" * 120)
@@ -520,8 +539,7 @@ def _install_skill(target_dir: str | None):
         installed.append(str(dest.relative_to(root)))
 
     if not installed:
-        # Neither .github nor .claude exists -- default to .github
-        dest_dir = root / ".github" / "skills" / "wormlens"
+        dest_dir = root / ".claude" / "skills" / "wormlens"
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / "SKILL.md"
         dest.write_text(content, encoding="utf-8")
@@ -649,6 +667,70 @@ def _grep_sessions(sessions: list, pattern: str, ignore_case: bool = False,
     return total_matches
 
 
+def _do_handoff(session_id_prefix: str, handoff_marker_path: Path):
+    """Scan session for <wl-summary> and create handoff marker file."""
+    import json as _json
+
+    sources_to_search = [cls() for cls in PROVIDERS.values()]
+    input_paths = []
+    for src in sources_to_search:
+        all_files = src.discover_sessions(all_sessions=True)
+        input_paths.extend(
+            f for f in all_files
+            if f.stem.startswith(session_id_prefix)
+        )
+
+    if not input_paths:
+        print(f"Error: no sessions found matching: {session_id_prefix}", file=sys.stderr)
+        sys.exit(1)
+
+    session_file = input_paths[0]
+    summary_rx = re.compile(r"<wl-summary>(.*?)</wl-summary>", re.DOTALL)
+    found_summary = None
+
+    lines = session_file.read_bytes().splitlines()
+    for raw_line in reversed(lines):
+        try:
+            record = _json.loads(raw_line)
+        except (ValueError, UnicodeDecodeError):
+            continue
+        if record.get("type") != "assistant":
+            continue
+        msg = record.get("message", {})
+        if not isinstance(msg, dict):
+            continue
+        content = msg.get("content", "")
+        if isinstance(content, list):
+            parts = [
+                b.get("text", "")
+                for b in content
+                if isinstance(b, dict) and b.get("type") == "text"
+            ]
+            content = " ".join(parts)
+        if not isinstance(content, str):
+            continue
+        m = summary_rx.search(content)
+        if m:
+            found_summary = m.group(1).strip()
+            break
+
+    if not found_summary:
+        print(
+            "Error: no <wl-summary> tag found in session. "
+            "Write a <wl-summary>description</wl-summary> in your response before calling wl --handoff.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    found_summary = found_summary.strip()
+    found_summary = "".join(c for c in found_summary if 0x20 <= ord(c) <= 0x7E)
+    found_summary = found_summary[:160].strip()
+
+    handoff_marker_path.parent.mkdir(parents=True, exist_ok=True)
+    handoff_marker_path.write_text(found_summary, encoding="utf-8")
+    print(f"Handoff ready: {found_summary}", file=sys.stderr)
+
+
 def main():
     parser = _build_parser()
     args = parser.parse_args()
@@ -664,6 +746,13 @@ def main():
         return
     if args.launch:
         print("wormlens harness not yet implemented. See .local/docs/design-spec-v1.md")
+        return
+    if args.handoff:
+        if not args.session:
+            print("Error: --handoff requires --session <session-id>", file=sys.stderr)
+            sys.exit(1)
+        marker = Path.home() / ".claude" / ".wormlens" / ".handoff"
+        _do_handoff(args.session.strip(), marker)
         return
 
     if args.all:
@@ -691,6 +780,51 @@ def main():
 
     min_turns = args.min_turns
     min_bytes = _parse_size(args.min_size) if args.min_size else None
+
+    if args.list_sessions and args.grep:
+        grep_flags = re.IGNORECASE if args.ignore_case else 0
+        try:
+            grep_rx = re.compile(args.grep, grep_flags)
+        except re.error as e:
+            print(f"Error: invalid regex: {e}", file=sys.stderr)
+            sys.exit(1)
+
+        if args.source != "auto":
+            grep_sources = [source]
+        else:
+            grep_sources = [cls() for cls in PROVIDERS.values()]
+
+        all_rows = []
+        for src in grep_sources:
+            all_rows.extend(src.list_sessions_metadata())
+
+        if min_turns is None and min_bytes is None:
+            min_turns = 2
+        all_rows = _filter_session_rows(all_rows, min_turns, min_bytes)
+
+        matching_rows = []
+        for row in all_rows:
+            fpath = Path(row["file"])
+            if not fpath.is_file():
+                continue
+            match_count = 0
+            with open(fpath, "rb") as f:
+                for raw_line in f:
+                    try:
+                        line_str = raw_line.decode("utf-8", errors="replace")
+                    except Exception:
+                        continue
+                    if grep_rx.search(line_str):
+                        match_count += 1
+            if match_count > 0:
+                row["match_count"] = match_count
+                matching_rows.append(row)
+
+        if not matching_rows:
+            print(f"No sessions matched pattern '{args.grep}'.", file=sys.stderr)
+            sys.exit(1)
+        _print_sessions_table(matching_rows)
+        return
 
     if args.list_sessions:
         rows = source.list_sessions_metadata()
@@ -826,8 +960,11 @@ def main():
         project = sessions[0].metadata.get("project", "")
 
     # Resolve frontmatter default: on for md/chat, off for txt/jsonl
+    # --recall forces frontmatter off (agent already committed to loading)
     use_frontmatter = args.frontmatter
-    if use_frontmatter is None:
+    if args.recall:
+        use_frontmatter = False
+    elif use_frontmatter is None:
         use_frontmatter = (args.fmt in ("md", "chat"))
 
     md_meta = {
@@ -836,6 +973,7 @@ def main():
         "project": project,
         "frontmatter": use_frontmatter,
         "summary": args.summary,  # None = auto
+        "recall": args.recall,
     }
 
     out_path = None
