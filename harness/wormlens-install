@@ -31,14 +31,14 @@ echo "0" > "$WORMLENS_DIR/session_count"
 # Copy skill file
 if [ -f "$SCRIPT_DIR/wormlens-skill.md" ]; then
     cp "$SCRIPT_DIR/wormlens-skill.md" "$SKILL_DIR/wormlens.md"
-    echo -e "${GREEN}✓${NC} Installed skill: $SKILL_DIR/wormlens.md"
+    echo -e "${GREEN}[OK]${NC} Installed skill: $SKILL_DIR/wormlens.md"
 fi
 
 # Copy wormlens launcher
 if [ -f "$SCRIPT_DIR/wormlens" ]; then
     cp "$SCRIPT_DIR/wormlens" "$WORMLENS_DIR/wormlens"
     chmod +x "$WORMLENS_DIR/wormlens"
-    echo -e "${GREEN}✓${NC} Installed launcher: $WORMLENS_DIR/wormlens"
+    echo -e "${GREEN}[OK]${NC} Installed launcher: $WORMLENS_DIR/wormlens"
 fi
 
 # Add to .gitignore if it exists
@@ -47,11 +47,11 @@ if [ -f "$TARGET/.gitignore" ]; then
         echo "" >> "$TARGET/.gitignore"
         echo "# wormlens session data" >> "$TARGET/.gitignore"
         echo ".wormlens/" >> "$TARGET/.gitignore"
-        echo -e "${GREEN}✓${NC} Added .wormlens/ to .gitignore"
+        echo -e "${GREEN}[OK]${NC} Added .wormlens/ to .gitignore"
     fi
 else
     echo ".wormlens/" > "$TARGET/.gitignore"
-    echo -e "${GREEN}✓${NC} Created .gitignore with .wormlens/"
+    echo -e "${GREEN}[OK]${NC} Created .gitignore with .wormlens/"
 fi
 
 # Create CLAUDE.md entry if CLAUDE.md exists
@@ -63,7 +63,7 @@ if [ -f "$TARGET/CLAUDE.md" ]; then
 
 This project uses wormlens for lossless session continuity. Check `.wormlens/status` for context fill %. See the wormlens skill for handoff protocol.
 EOF
-        echo -e "${GREEN}✓${NC} Added wormlens section to CLAUDE.md"
+        echo -e "${GREEN}[OK]${NC} Added wormlens section to CLAUDE.md"
     fi
 fi
 

@@ -811,6 +811,9 @@ def main():
         sessions = _filter_by_index(sessions, index_set)
         if not sessions:
             print(f"No messages matched index spec: {args.index}", file=sys.stderr)
+            if use_compact_filter:
+                print("Hint: recovery mode skips pre-compact messages. "
+                      "Try --full --index " + args.index, file=sys.stderr)
             sys.exit(0)
 
     # -- Summary stats (--summary-stats) ---------------------------------------
@@ -849,3 +852,6 @@ def main():
     src_names = ", ".join(p.name for p in input_paths)
     dest = f" -> {out_path}" if out_path else ""
     print(f"Extracted {count} records from {src_names}{dest}", file=sys.stderr)
+    if count == 0 and sessions:
+        print("Hint: 0 records extracted. Try --all to include tool calls, "
+              "thinking, and system messages.", file=sys.stderr)

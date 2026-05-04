@@ -44,7 +44,7 @@ CYAN='\033[0;36m'
 DIM='\033[2m'
 NC='\033[0m'
 
-# ── Args ──────────────────────────────────────────────────
+# -- Args --------------------------------------------------
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -75,7 +75,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# ── Helpers ───────────────────────────────────────────────
+# -- Helpers -----------------------------------------------
 
 log() {
     local ts
@@ -85,9 +85,9 @@ log() {
 
 wl_banner() {
     echo -e "${CYAN}"
-    echo '  ╦ ╦╔═╗╦═╗╔╦╗╦  ╔═╗╔╗╔╔═╗'
-    echo '  ║║║║ ║╠╦╝║║║║  ║╣ ║║║╚═╗'
-    echo '  ╚╩╝╚═╝╩╚═╩ ╩╩═╝╚═╝╝╚╝╚═╝'
+    echo '  + ++=++=+++++  +=+++++=+'
+    echo '  |||| |+++||||  |+ |||+=+'
+    echo '  ++++=+++=+ ++=++=+++++=+'
     echo -e "${NC}${DIM}  v${VERSION} -- lossless session continuity${NC}"
     echo ""
 }
@@ -112,7 +112,7 @@ get_latest_extract() {
     fi
 }
 
-# ── Monitor Management ────────────────────────────────────
+# -- Monitor Management ------------------------------------
 
 start_monitor() {
     log "Starting context monitor (limit: ${CTX_LIMIT} tokens, poll: ${POLL_INTERVAL}s)"
@@ -138,7 +138,7 @@ stop_monitor() {
     fi
 }
 
-# ── Extract ───────────────────────────────────────────────
+# -- Extract -----------------------------------------------
 
 do_extract() {
     local session_num=$1
@@ -162,7 +162,7 @@ do_extract() {
     fi
 }
 
-# ── Boot Prompt Construction ──────────────────────────────
+# -- Boot Prompt Construction ------------------------------
 
 build_boot_prompt() {
     local extract_file=$1
@@ -224,7 +224,7 @@ WORMLENS PROTOCOL:
     echo "$prompt"
 }
 
-# ── Cleanup ───────────────────────────────────────────────
+# -- Cleanup -----------------------------------------------
 
 cleanup() {
     log "Shutting down wormlens..."
@@ -237,7 +237,7 @@ cleanup() {
 
 trap cleanup SIGINT SIGTERM
 
-# ── Main Loop ─────────────────────────────────────────────
+# -- Main Loop ---------------------------------------------
 
 main() {
     wl_banner
@@ -271,16 +271,16 @@ main() {
         exit 0
     fi
 
-    # ── The loop ──────────────────────────────────────────
+    # -- The loop ------------------------------------------
 
     while true; do
         session_num=$(($(get_session_count) + 1))
         increment_session_count
         rm -f "$HANDOFF_MARKER"
 
-        log "═══════════════════════════════════════════"
+        log "==========================================="
         log "${GREEN}SESSION #${session_num}${NC}"
-        log "═══════════════════════════════════════════"
+        log "==========================================="
 
         # Start context monitor
         start_monitor
@@ -316,7 +316,7 @@ main() {
 
         log "Claude PID: $claude_pid"
 
-        # ── Wait for handoff or exit ──────────────────
+        # -- Wait for handoff or exit ------------------
 
         while true; do
             # Check if Claude exited on its own (user quit, crash, etc)
