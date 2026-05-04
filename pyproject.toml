@@ -10,7 +10,7 @@ readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.9"
 authors = [
-    {name = "Chris", email = "apresence@gmail.com"},
+    {name = "Chris", email = "8013838+apresence@users.noreply.github.com"},
 ]
 keywords = ["claude", "claude-code", "copilot", "chat", "extraction", "memory"]
 classifiers = [
