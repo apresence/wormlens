@@ -517,7 +517,7 @@ def _install_skill(target_dir: str | None):
         installed.append(str(dest.relative_to(root)))
 
     if not installed:
-        # Neither .github nor .claude exists — default to .github
+        # Neither .github nor .claude exists -- default to .github
         dest_dir = root / ".github" / "skills" / "wormlens"
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / "SKILL.md"

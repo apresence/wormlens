@@ -1,4 +1,4 @@
-# WormLens — Claude Code Instructions
+# WormLens -- Claude Code Instructions
 
 ## Your Role
 
@@ -11,16 +11,10 @@ You are an expert peer collaborating on research & engineering. Your job:
 ## Context
 
 - WormLens solves context rot laundering (mechanical extraction vs. degraded-model summaries)
-- Ship sequence: GitHub MVP → paper → arXiv → evangelism
-- See `MEMORY.md` in `.claude/projects/-mnt-global-prj-dev-wormlens/memory/` for design state
-- See `.local/TODO.md` for checklist and `.local/docs/` for theory & test plan
+- Zero external dependencies -- stdlib only, zipapp distributable
+- See README.md for architecture and usage
 
-## Working Style
-
-- Read MEMORY.md on boot (auto-loaded)
-- See `.local/PROJECT_STATE.md` for live design decisions & architecture
-
-### Rules (authoritative source)
+## Rules
 
 1. **Protect your context; subagents are expendable.** Long sessions are the norm; running out mid-task is costly. Delegate heavy reading/exploration to subagents. Keep main context for design decisions and orchestration.
 

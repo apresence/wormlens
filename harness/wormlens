@@ -2,7 +2,7 @@
 set -uo pipefail
 
 # ============================================================
-# wormlens — Infinite session continuity for Claude Code
+# wormlens -- Infinite session continuity for Claude Code
 #
 # Replaces lossy compaction with lossless episodic memory.
 # Monitors context usage, extracts on handoff, restarts
@@ -56,7 +56,7 @@ while [[ $# -gt 0 ]]; do
         --chatlog-cmd)   CHATLOG_CMD="$2"; shift 2 ;;
         --claude-cmd)    CLAUDE_CMD="$2"; shift 2 ;;
         -h|--help)
-            echo "wormlens v$VERSION — Infinite session continuity for Claude Code"
+            echo "wormlens v$VERSION -- Infinite session continuity for Claude Code"
             echo ""
             echo "Usage: ./wormlens [options]"
             echo ""
@@ -88,7 +88,7 @@ wl_banner() {
     echo '  ╦ ╦╔═╗╦═╗╔╦╗╦  ╔═╗╔╗╔╔═╗'
     echo '  ║║║║ ║╠╦╝║║║║  ║╣ ║║║╚═╗'
     echo '  ╚╩╝╚═╝╩╚═╩ ╩╩═╝╚═╝╝╚╝╚═╝'
-    echo -e "${NC}${DIM}  v${VERSION} — lossless session continuity${NC}"
+    echo -e "${NC}${DIM}  v${VERSION} -- lossless session continuity${NC}"
     echo ""
 }
 
@@ -171,7 +171,7 @@ build_boot_prompt() {
 
     prompt+="You are resuming work via wormlens session continuity (session #${session_num}).
 
-PREVIOUS SESSION MEMORY (lossless extract — this is your complete episodic recall):
+PREVIOUS SESSION MEMORY (lossless extract -- this is your complete episodic recall):
 
 "
 
@@ -183,7 +183,7 @@ PREVIOUS SESSION MEMORY (lossless extract — this is your complete episodic rec
 
 END OF PREVIOUS SESSION MEMORY.
 
-IMPORTANT — wormlens protocol:
+IMPORTANT -- wormlens protocol:
 1. You have full recall of the previous session above. Do NOT ask the user to repeat anything.
 2. A context monitor is running. Check .wormlens/status periodically (read the file) to see your context fill %.
 3. When context reaches ~85-90%, YOU decide when to initiate handoff:
@@ -261,7 +261,7 @@ main() {
     fi
 
     if [ "$DRY_RUN" = true ]; then
-        log "DRY RUN — would start session #$((session_num + 1))"
+        log "DRY RUN -- would start session #$((session_num + 1))"
         if [ "$RESUME" = true ]; then
             local le
             le=$(get_latest_extract)
@@ -297,7 +297,7 @@ main() {
             log "Extract size: ${extract_size} bytes"
             boot_prompt=$(build_boot_prompt "$last_extract" "$session_num")
         else
-            log "First session — no prior memory"
+            log "First session -- no prior memory"
             boot_prompt=$(build_initial_prompt "$session_num")
         fi
 
@@ -345,7 +345,7 @@ main() {
                 pct=$(cat "$CTX_PCT_FILE" 2>/dev/null || echo "0")
                 # Force handoff at 95% if agent hasn't done it
                 if (( $(echo "$pct > 95" | bc -l 2>/dev/null || echo 0) )); then
-                    log "${RED}CRITICAL: Context at ${pct}% — forcing handoff${NC}"
+                    log "${RED}CRITICAL: Context at ${pct}% -- forcing handoff${NC}"
                     do_extract "$session_num"
                     kill "$claude_pid" 2>/dev/null
                     wait "$claude_pid" 2>/dev/null || true
@@ -362,7 +362,7 @@ main() {
         # If no extract was created by the agent, create one now
         local expected_extract="$EXTRACT_DIR/session_${session_num}.md"
         if [ ! -f "$expected_extract" ] || [ ! -s "$expected_extract" ]; then
-            log "Agent didn't create extract — creating post-mortem extract"
+            log "Agent didn't create extract -- creating post-mortem extract"
             do_extract "$session_num"
         fi
 

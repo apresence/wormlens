@@ -78,7 +78,7 @@ By default, only user and assistant messages are included. Add flags to include 
 
 | Format | Flag | Notes |
 |--------|------|-------|
-| Chat | `--format chat` (default) | Ultra-compact XML-style tags, ~3 tokens/turn, agent-optimized |
+| Chat | `--format chat` (default) | Ultra-compact XML-style tags, ~10 tokens/turn, agent-optimized |
 | Markdown | `--format md` | Structured with headers, turn numbers, metadata |
 | Plain text | `--format txt` | Session/role markers, no formatting |
 | JSONL | `--format jsonl` | One JSON record per message |

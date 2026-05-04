@@ -4,7 +4,7 @@ description: 'Lossless session continuity. USE WHEN: context monitor shows >80% 
 argument-hint: 'e.g. "check context status", "initiate handoff", "how much context is left"'
 ---
 
-# wormlens — Lossless Session Continuity
+# wormlens -- Lossless Session Continuity
 
 You are running inside a wormlens session loop. This means:
 
@@ -18,7 +18,7 @@ You are running inside a wormlens session loop. This means:
    ```
    This returns JSON with `context_pct`, `context_remaining`, and `level` (OK/CAUTION/WARNING/HANDOFF_NOW/CRITICAL).
 
-4. **You decide when to hand off.** Not the system, not a timer — you. The right time is when:
+4. **You decide when to hand off.** Not the system, not a timer -- you. The right time is when:
    - Context is at 85-90%
    - You're at a clean stopping point (commit pushed, test passing, etc.)
    - NOT in the middle of a multi-step operation

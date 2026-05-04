@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-wormlens-monitor — Background context % monitor for Claude Code.
+wormlens-monitor -- Background context % monitor for Claude Code.
 
 Watches the active CC JSONL session file, parses token usage from
 assistant response records, estimates context fill %, and writes
@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 
 
-DEFAULT_CTX_LIMIT = 200_000  # tokens — CC default for Opus/Sonnet
+DEFAULT_CTX_LIMIT = 200_000  # tokens -- CC default for Opus/Sonnet
 STATUS_DIR = ".wormlens"
 STATUS_FILE = "status"
 POLL_INTERVAL = 5  # seconds
@@ -89,7 +89,7 @@ def parse_token_usage(session_path: Path) -> dict:
                 compact_count += 1
 
     # Best estimate of current context window usage:
-    # The last assistant record's inputTokens is the closest proxy —
+    # The last assistant record's inputTokens is the closest proxy --
     # it represents everything the model saw on its most recent turn.
     current_ctx = last_usage.get("inputTokens", total_input)
 

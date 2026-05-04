@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ============================================================
-# wormlens-install — Set up wormlens in a project
+# wormlens-install -- Set up wormlens in a project
 #
 # Creates .wormlens/ dir, installs skill, adds gitignore entries.
 #
@@ -59,7 +59,7 @@ if [ -f "$TARGET/CLAUDE.md" ]; then
     if ! grep -q "wormlens" "$TARGET/CLAUDE.md" 2>/dev/null; then
         cat >> "$TARGET/CLAUDE.md" << 'EOF'
 
-## wormlens — Session Continuity
+## wormlens -- Session Continuity
 
 This project uses wormlens for lossless session continuity. Check `.wormlens/status` for context fill %. See the wormlens skill for handoff protocol.
 EOF
