@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ============================================================
+# wormlens-install — Set up wormlens in a project
+#
+# Creates .wormlens/ dir, installs skill, adds gitignore entries.
+#
+# Usage:
+#   ./wormlens-install [project-dir]
+# ============================================================
+
+GREEN='\033[0;32m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+TARGET="${1:-.}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+WORMLENS_DIR="$TARGET/.wormlens"
+SKILL_DIR="$TARGET/.claude/skills"
+
+echo -e "${CYAN}Installing wormlens into: $TARGET${NC}"
+
+# Create directories
+mkdir -p "$WORMLENS_DIR/extracts"
+mkdir -p "$SKILL_DIR"
+
+# Initialize session counter
+echo "0" > "$WORMLENS_DIR/session_count"
+
+# Copy skill file
+if [ -f "$SCRIPT_DIR/wormlens-skill.md" ]; then
+    cp "$SCRIPT_DIR/wormlens-skill.md" "$SKILL_DIR/wormlens.md"
+    echo -e "${GREEN}✓${NC} Installed skill: $SKILL_DIR/wormlens.md"
+fi
+
+# Copy wormlens launcher
+if [ -f "$SCRIPT_DIR/wormlens" ]; then
+    cp "$SCRIPT_DIR/wormlens" "$WORMLENS_DIR/wormlens"
+    chmod +x "$WORMLENS_DIR/wormlens"
+    echo -e "${GREEN}✓${NC} Installed launcher: $WORMLENS_DIR/wormlens"
+fi
+
+# Add to .gitignore if it exists
+if [ -f "$TARGET/.gitignore" ]; then
+    if ! grep -q ".wormlens/" "$TARGET/.gitignore" 2>/dev/null; then
+        echo "" >> "$TARGET/.gitignore"
+        echo "# wormlens session data" >> "$TARGET/.gitignore"
+        echo ".wormlens/" >> "$TARGET/.gitignore"
+        echo -e "${GREEN}✓${NC} Added .wormlens/ to .gitignore"
+    fi
+else
+    echo ".wormlens/" > "$TARGET/.gitignore"
+    echo -e "${GREEN}✓${NC} Created .gitignore with .wormlens/"
+fi
+
+# Create CLAUDE.md entry if CLAUDE.md exists
+if [ -f "$TARGET/CLAUDE.md" ]; then
+    if ! grep -q "wormlens" "$TARGET/CLAUDE.md" 2>/dev/null; then
+        cat >> "$TARGET/CLAUDE.md" << 'EOF'
+
+## wormlens — Session Continuity
+
+This project uses wormlens for lossless session continuity. Check `.wormlens/status` for context fill %. See the wormlens skill for handoff protocol.
+EOF
+        echo -e "${GREEN}✓${NC} Added wormlens section to CLAUDE.md"
+    fi
+fi
+
+echo ""
+echo -e "${GREEN}wormlens installed.${NC}"
+echo ""
+echo "Usage:"
+echo "  .wormlens/wormlens                    # start infinite loop"
+echo "  .wormlens/wormlens --prompt 'task'    # start with a task"
+echo "  .wormlens/wormlens --resume           # resume from last session"
+echo ""
+echo "The wormlens skill is now available to Claude Code agents in this project."
