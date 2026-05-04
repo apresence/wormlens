@@ -12,7 +12,7 @@ Universal chat history extraction for Claude Code and VS Code Copilot. Reads raw
 ## Installation
 
 ```bash
-pip install ./wormlens
+pip install .
 wl --help
 ```
 
