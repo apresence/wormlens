@@ -35,5 +35,11 @@ Repository = "https://github.com/apresence/wormlens"
 "wormlens.providers.vscode_copilot" = "providers/vscode_copilot"
 "wormlens.harness" = "harness"
 
-[tool.setuptools.packages]
-find = {where = ["."], namespaces = false}
+[tool.setuptools]
+packages = [
+    "wormlens",
+    "wormlens.providers",
+    "wormlens.providers.claude_code",
+    "wormlens.providers.vscode_copilot",
+    "wormlens.harness",
+]
