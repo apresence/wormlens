@@ -79,11 +79,25 @@ Examples:
     modes.add_argument("--doctor", action="store_true",
                        help="Run diagnostics (provider imports, session discovery, env)")
     modes.add_argument("--launch", action="store_true",
-                       help="Launch the wormlens outer-loop harness (placeholder)")
+                       help="Launch the wormlens outer-loop harness")
     modes.add_argument("--recall", action="store_true",
                        help="Agent recall mode: strip frontmatter, add instruction caveat, stdout")
     modes.add_argument("--handoff", action="store_true",
                        help="Create handoff marker from session's <wl-summary> tag (requires --session)")
+
+    launch = p.add_argument_group("launch options (used with --launch)")
+    launch.add_argument("--prompt", default=None,
+                        help="Initial task prompt for the CC session")
+    launch.add_argument("--ctx-limit", type=int, default=90,
+                        help="Context used %% for URGENT injection (default: 90)")
+    launch.add_argument("--hard-kill", type=int, default=99,
+                        help="Context used %% for force kill (default: 99)")
+    launch.add_argument("--grace", type=float, default=60.0,
+                        help="Seconds after URGENT before forced handoff (default: 60)")
+    launch.add_argument("--poll-interval", type=float, default=2.0,
+                        help="Harness poll interval in seconds (default: 2.0)")
+    launch.add_argument("--project-dir", default=None,
+                        help="Project directory for trust dialog (default: cwd)")
 
     grep = p.add_argument_group("grep options")
     grep.add_argument("-A", "--after", type=int, default=0, metavar="N",
@@ -853,7 +867,21 @@ def main():
         _run_doctor()
         return
     if args.launch:
-        print("wormlens harness not yet implemented. See .local/docs/design-spec-v1.md")
+        from .harness.wormlens import main as harness_main
+        argv = []
+        if args.prompt:
+            argv += ["--prompt", args.prompt]
+        if args.ctx_limit != 90:
+            argv += ["--ctx-limit", str(args.ctx_limit)]
+        if args.hard_kill != 99:
+            argv += ["--hard-kill", str(args.hard_kill)]
+        if args.grace != 60.0:
+            argv += ["--grace", str(args.grace)]
+        if args.poll_interval != 2.0:
+            argv += ["--poll-interval", str(args.poll_interval)]
+        if args.project_dir:
+            argv += ["--project-dir", args.project_dir]
+        harness_main(argv if argv else None)
         return
     if args.handoff:
         if not args.session:

@@ -174,6 +174,10 @@ wormlens/
 ├── pipeline.py          # discover -> parse -> filter -> sort
 ├── formatters.py        # md/txt/jsonl output + VS Code markdown cleanup
 ├── build_pyz.py         # Zipapp builder
+├── harness/
+│   ├── __init__.py      # Harness package
+│   ├── wormlens.py      # Outer loop (wl launch)
+│   └── wl-hook.py       # StatusLine + context injection hook
 └── providers/
     ├── __init__.py      # Auto-discovery registry
     ├── _base.py         # Provider ABC
@@ -190,6 +194,38 @@ wl --doctor
 ```
 
 Checks provider availability, session directory paths, file permissions, and configuration health. Run this first when something is not working.
+
+## Session Continuity (Outer Loop)
+
+`wl launch` runs the wormlens harness -- an outer loop that manages CC's lifecycle
+for infinite session continuity. When the agent reaches context limits, the harness
+restarts CC with episodic recall from the prior session.
+
+```bash
+wl launch                                # interactive, no initial prompt
+wl launch --prompt "build a redis server" # start with a task
+wl launch --ctx-limit 85 --hard-kill 95  # tighter thresholds
+wl launch --grace 30                     # shorter grace period before kill
+wl launch --project-dir /path/to/repo    # explicit project dir
+```
+
+| Flag | Default | Effect |
+|------|---------|--------|
+| `--prompt` | none | Initial task prompt for the CC session |
+| `--ctx-limit` | 90 | Context %% at which URGENT is injected |
+| `--hard-kill` | 99 | Context %% at which to force kill |
+| `--grace` | 60 | Seconds after URGENT before forced handoff |
+| `--poll-interval` | 2.0 | Poll interval for context/handoff checks |
+| `--project-dir` | cwd | Project directory for trust dialog |
+
+The harness requires the wormlens skill to be installed (`wl --install-skill`) so
+that context tracking hooks are active.
+
+For debugging, the harness can also be run standalone:
+
+```bash
+python3 -m wormlens.harness.wormlens --prompt "echo hi"
+```
 
 ## Known Limitations
 

@@ -199,7 +199,7 @@ def kill_claude(proc: subprocess.Popen):
     log("Claude stopped")
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(
         description="wormlens outer loop -- infinite session continuity"
     )
@@ -224,7 +224,7 @@ def main():
         "--project-dir", default=None,
         help="Project directory for trust dialog (default: cwd)"
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     WL_STATE_DIR.mkdir(parents=True, exist_ok=True)
     HANDOFF_MARKER.unlink(missing_ok=True)
