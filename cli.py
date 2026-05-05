@@ -195,7 +195,7 @@ def _print_sessions_table(rows: list[dict]):
     has_matches = any("match_count" in r for r in rows)
 
     header = "S "
-    header += f"{'SESSION ID':<38} {'SIZE':>8} {'USER':>6} {'ASST':>6} {'START':>20}"
+    header += f"{'SESSION':<38} {'SIZE':>8} {'USER':>6} {'ASST':>6} {'START (UTC)':>20}"
     if has_matches:
         header += f"  {'MATCHES':>7}"
     header += "  PREVIEW"
