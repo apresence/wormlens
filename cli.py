@@ -496,6 +496,11 @@ def _get_skill_source() -> Path:
     return Path(__file__).parent / "skill.md"
 
 
+def _get_hook_source() -> Path:
+    """Return path to the canonical wl-hook.py bundled with the package."""
+    return Path(__file__).parent / "harness" / "wl-hook.py"
+
+
 def _find_repo_root(start: Path | None = None) -> Path | None:
     """Walk up from start (default: cwd) looking for a repo root."""
     d = (start or Path.cwd()).resolve()
@@ -510,10 +515,14 @@ def _find_repo_root(start: Path | None = None) -> Path | None:
 
 
 def _install_skill(target_dir: str | None):
-    """Install the wormlens SKILL.md into a repo."""
-    source = _get_skill_source()
-    if not source.is_file():
-        print(f"Error: bundled skill.md not found at {source}", file=sys.stderr)
+    """Install the wormlens SKILL.md and wl-hook.py into a repo."""
+    skill_source = _get_skill_source()
+    hook_source = _get_hook_source()
+    if not skill_source.is_file():
+        print(f"Error: bundled skill.md not found at {skill_source}", file=sys.stderr)
+        sys.exit(1)
+    if not hook_source.is_file():
+        print(f"Error: bundled wl-hook.py not found at {hook_source}", file=sys.stderr)
         sys.exit(1)
 
     if target_dir:
@@ -524,8 +533,19 @@ def _install_skill(target_dir: str | None):
             print("Error: no repo root found from cwd. Use --skill-target DIR.", file=sys.stderr)
             sys.exit(1)
 
-    content = source.read_text(encoding="utf-8")
+    skill_content = skill_source.read_text(encoding="utf-8")
+    hook_content = hook_source.read_text(encoding="utf-8")
     installed = []
+
+    def _write_pair(parent: Path) -> None:
+        parent.mkdir(parents=True, exist_ok=True)
+        skill_dest = parent / "SKILL.md"
+        hook_dest = parent / "wl-hook.py"
+        skill_dest.write_text(skill_content, encoding="utf-8")
+        hook_dest.write_text(hook_content, encoding="utf-8")
+        hook_dest.chmod(0o755)
+        installed.append(str(skill_dest.relative_to(root)))
+        installed.append(str(hook_dest.relative_to(root)))
 
     for rel in _SKILL_DIRS:
         parent = root / rel
@@ -533,17 +553,10 @@ def _install_skill(target_dir: str | None):
         framework_dir = parent.parent.parent  # e.g. .github or .claude
         if not framework_dir.is_dir():
             continue
-        dest = parent / "SKILL.md"
-        parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(content, encoding="utf-8")
-        installed.append(str(dest.relative_to(root)))
+        _write_pair(parent)
 
     if not installed:
-        dest_dir = root / ".claude" / "skills" / "wormlens"
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / "SKILL.md"
-        dest.write_text(content, encoding="utf-8")
-        installed.append(str(dest.relative_to(root)))
+        _write_pair(root / ".claude" / "skills" / "wormlens")
 
     for p in installed:
         print(f"Installed: {p}")
@@ -722,12 +735,8 @@ def _do_handoff(session_id_prefix: str, handoff_marker_path: Path):
         )
         sys.exit(1)
 
-    found_summary = found_summary.strip()
-    found_summary = "".join(c for c in found_summary if 0x20 <= ord(c) <= 0x7E)
-    found_summary = found_summary[:160].strip()
-
     handoff_marker_path.parent.mkdir(parents=True, exist_ok=True)
-    handoff_marker_path.write_text(found_summary, encoding="utf-8")
+    handoff_marker_path.touch()
     print(f"Handoff ready: {found_summary}", file=sys.stderr)
 
 

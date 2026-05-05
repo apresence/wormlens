@@ -11,3 +11,5 @@ chatlog/
 .copilot/
 *.jsonl
 *.chat
+*.wl
+WL-EPISODIC-HANDOFF.md
