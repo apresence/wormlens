@@ -16,6 +16,7 @@ PROVIDERS: dict[str, type[Provider]] = {}
 _KNOWN_PROVIDERS = [
     "claude_code",
     "vscode_copilot",
+    "wl_extract",
 ]
 
 

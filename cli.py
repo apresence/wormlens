@@ -84,6 +84,8 @@ Examples:
                        help="Agent recall mode: strip frontmatter, add instruction caveat, stdout")
     modes.add_argument("--handoff", action="store_true",
                        help="Create handoff marker from session's <wl-summary> tag (requires --session)")
+    modes.add_argument("--checkpoints", action="store_true",
+                       help="Extract <wl-checkpoint> tags as ordered list (one per line)")
 
     launch = p.add_argument_group("launch options (used with --launch)")
     launch.add_argument("--prompt", default=None,
@@ -202,8 +204,11 @@ def _print_sessions_table(rows: list[dict]):
             size_kb = row["size"] / 1024
             size_str = f"{size_kb / 1024:.1f}MB" if size_kb >= 1024 else f"{size_kb:.0f}KB"
             start = row.get("start_ts", "")[:16]
+            last_checkpoint = row.get("last_checkpoint", "")
             wl_summary = row.get("wl_summary", "")
-            if wl_summary:
+            if last_checkpoint:
+                preview = last_checkpoint
+            elif wl_summary:
                 preview = wl_summary
             else:
                 preview_msgs = row.get("preview", [])
@@ -871,6 +876,64 @@ def _do_handoff(session_id_prefix: str, handoff_marker_path: Path):
     print(f"Handoff ready: {found_summary}", file=sys.stderr)
 
 
+def _do_checkpoints(args):
+    """Extract <wl-checkpoint> tags from sessions and print as ordered list."""
+    source = resolve_source(
+        args.source if args.source != "auto" else None,
+        [Path(p) for p in args.input] if args.input else None,
+    )
+
+    if args.session:
+        session_ids = [s.strip() for s in args.session.split(",")]
+        if args.source == "auto":
+            sources_to_search = [cls() for cls in PROVIDERS.values()]
+        else:
+            sources_to_search = [source]
+        input_paths = []
+        for src in sources_to_search:
+            all_files = src.discover_sessions(all_sessions=True)
+            input_paths.extend(
+                f for f in all_files
+                if any(f.stem.startswith(sid) for sid in session_ids)
+            )
+        if not input_paths:
+            print(f"Error: no sessions found matching: {args.session}", file=sys.stderr)
+            sys.exit(1)
+        if args.source == "auto":
+            from .providers import detect_provider
+            detected = detect_provider(input_paths[0])
+            if detected:
+                source = detected()
+    else:
+        has_explicit_input = bool(args.input)
+        recovery_mode = (not has_explicit_input) and (not args.full)
+        extra = {}
+        if source.provider_id == "vscode":
+            extra["storage_id"] = args.storage_id
+        input_paths = resolve_input_files(
+            args.input or None, source,
+            recovery=recovery_mode,
+            recursive=args.recursive,
+            **extra,
+        )
+
+    opts = FilterOpts()
+    sessions = extract_sessions(
+        source, input_paths, opts,
+        session_id_filter=args.session_id,
+        since_last_compact=False,
+    )
+
+    total = 0
+    for session in sessions:
+        for cp in session.checkpoints:
+            print(f"[turn {cp['turn']}] {cp['text']}")
+            total += 1
+
+    if total == 0:
+        print("No checkpoints found.", file=sys.stderr)
+
+
 def main():
     parser = _build_parser()
     if len(sys.argv) == 1:
@@ -910,6 +973,10 @@ def main():
             sys.exit(1)
         marker = Path.home() / ".claude" / ".wormlens" / ".handoff"
         _do_handoff(args.session.strip(), marker)
+        return
+
+    if args.checkpoints:
+        _do_checkpoints(args)
         return
 
     if args.all:

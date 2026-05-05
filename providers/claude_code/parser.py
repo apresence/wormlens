@@ -48,6 +48,8 @@ _TEAMMATE_RE = re.compile(
     re.DOTALL,
 )
 
+_WL_CHECKPOINT_RE = re.compile(r'<wl-checkpoint>(.*?)</wl-checkpoint>', re.DOTALL)
+
 _CONTINUATION_PREFIX = "This session is being continued from a previous conversation"
 
 
@@ -383,6 +385,7 @@ class ClaudeCodeProvider(Provider):
         messages_by_session: OrderedDict[str, list[ChatMessage]] = OrderedDict()
         saw_compact = False  # track compact_boundary for continuation summary detection
         compact_summaries: dict[str, str] = {}  # sid -> summary text
+        checkpoints_by_session: dict[str, list[dict]] = {}
 
         with open(path, "rb") as f:
             for idx, raw_line in enumerate(f):
@@ -411,6 +414,21 @@ class ClaudeCodeProvider(Provider):
                         compact_summaries[sid] = text
                     saw_compact = False
 
+                if rec_type == "assistant":
+                    msg_obj = record.get("message", {})
+                    if isinstance(msg_obj, dict):
+                        content = msg_obj.get("content", "")
+                        cp_text = _extract_text_from_content(content)
+                        if cp_text and "<wl-checkpoint>" in cp_text:
+                            sid_cp = record.get("sessionId", "unknown")
+                            for m in _WL_CHECKPOINT_RE.finditer(cp_text):
+                                hit = m.group(1).strip()[:160]
+                                if hit:
+                                    checkpoints_by_session.setdefault(sid_cp, []).append({
+                                        "turn": idx + 1,
+                                        "text": hit,
+                                    })
+
                 msgs = _process_record(record, opts)
                 for msg in msgs:
                     msg.source_file = str(path)
@@ -434,6 +452,7 @@ class ClaudeCodeProvider(Provider):
                 source_file=str(path),
                 source_type=self.provider_id,
                 messages=msgs,
+                checkpoints=checkpoints_by_session.get(sid, []),
                 metadata={
                     "project": project,
                     **({"compact_summary": compact_summaries[sid]} if sid in compact_summaries else {}),
@@ -453,6 +472,7 @@ class ClaudeCodeProvider(Provider):
             last_ts = None
             preview_msgs: list[str] = []
             wl_summary = ""
+            last_checkpoint = ""
 
             with open(fpath, "rb") as f:
                 for raw_line in f:
@@ -490,17 +510,17 @@ class ClaudeCodeProvider(Provider):
                                 preview_msgs.append(line)
                     elif rtype == "assistant":
                         assistant_count += 1
-                        if not wl_summary:
-                            msg = record.get("message", {})
-                            content = msg.get("content", "")
-                            if isinstance(content, list):
-                                parts = [
-                                    b.get("text", "")
-                                    for b in content
-                                    if isinstance(b, dict) and b.get("type") == "text"
-                                ]
-                                content = " ".join(parts)
-                            if isinstance(content, str):
+                        msg = record.get("message", {})
+                        content = msg.get("content", "")
+                        if isinstance(content, list):
+                            parts = [
+                                b.get("text", "")
+                                for b in content
+                                if isinstance(b, dict) and b.get("type") == "text"
+                            ]
+                            content = " ".join(parts)
+                        if isinstance(content, str):
+                            if not wl_summary:
                                 m = re.search(
                                     r"<wl-summary>(.*?)</wl-summary>",
                                     content,
@@ -508,6 +528,10 @@ class ClaudeCodeProvider(Provider):
                                 )
                                 if m:
                                     wl_summary = m.group(1).strip()[:80]
+                            if "<wl-checkpoint>" in content:
+                                cps = _WL_CHECKPOINT_RE.findall(content)
+                                if cps:
+                                    last_checkpoint = cps[-1].strip()[:160]
 
             rows.append({
                 "session_id": fpath.stem,
@@ -521,6 +545,7 @@ class ClaudeCodeProvider(Provider):
                 "source_type": self.provider_id,
                 "preview": preview_msgs,
                 "wl_summary": wl_summary,
+                "last_checkpoint": last_checkpoint,
             })
         return rows
 

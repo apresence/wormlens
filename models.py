@@ -29,6 +29,7 @@ class ChatSession:
     source_type: str = ""
     messages: list[ChatMessage] = field(default_factory=list)
     metadata: dict = field(default_factory=dict)
+    checkpoints: list[dict] = field(default_factory=list)
 
 
 @dataclass
