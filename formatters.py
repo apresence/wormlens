@@ -65,6 +65,32 @@ def _content_stats(text: str) -> dict:
     }
 
 
+_WL_EXTRACT_RE = re.compile(
+    r'<(wl-recall-caveat|wormlens-extract[^>]*)>'
+    r'(.*?)'
+    r'</(?:wl-recall-caveat|wormlens-extract)>',
+    re.DOTALL,
+)
+_WL_SESSION_ID_RE = re.compile(r'<session\s+id="([^"]+)"')
+_WL_TURN_RE = re.compile(r'<(?:user|assistant)\s+turn=')
+
+
+def _strip_embedded_extracts(text: str) -> str:
+    """Replace embedded wl extracts with provenance markers (anti-ouroboros)."""
+    def _make_marker(m: re.Match) -> str:
+        body = m.group(2)
+        sid_m = _WL_SESSION_ID_RE.search(body)
+        sid = sid_m.group(1) if sid_m else "unknown"
+        turns = len(_WL_TURN_RE.findall(body))
+        chars = len(body)
+        tokens = int(chars / 3.0)
+        return (
+            f"<!-- wl-recall: session={sid}"
+            f" turns={turns} tokens_approx={tokens} -->"
+        )
+    return _WL_EXTRACT_RE.sub(_make_marker, text)
+
+
 def _is_display_msg(msg: ChatMessage) -> bool:
     """True for messages that appear in md/txt output."""
     return (
@@ -154,7 +180,7 @@ def format_md(
                 body_lines.append(f"### Turn {turn_num}")
                 body_lines.append("")
 
-            text = msg.text
+            text = _strip_embedded_extracts(msg.text)
             if session.source_type == "vscode" and msg.role == "assistant":
                 text = _cleanup_vscode_markdown(text)
 
@@ -314,7 +340,7 @@ def format_chat(
             else:
                 turn_num = seq_turn
 
-            text = msg.text
+            text = _strip_embedded_extracts(msg.text)
             if session.source_type == "vscode" and msg.role == "assistant":
                 text = _cleanup_vscode_markdown(text)
 
@@ -393,7 +419,7 @@ def format_txt(sessions: list[ChatSession], recall: bool = False) -> str:
         lines.append(f"[END_DATE] {session.end_ts}")
 
         for msg in display_msgs:
-            lines.append(f"[{_msg_label(msg)}] {msg.text}")
+            lines.append(f"[{_msg_label(msg)}] {_strip_embedded_extracts(msg.text)}")
 
     body = "\n".join(lines)
     tag = "wl-recall-caveat" if recall else 'wormlens-extract format="txt"'
@@ -419,7 +445,7 @@ def write_jsonl(
             rec = {
                 "type": msg.msg_type,
                 "from": msg.role,
-                "text": msg.text,
+                "text": _strip_embedded_extracts(msg.text),
             }
             if include_ts and msg.timestamp:
                 rec["ts"] = msg.timestamp
