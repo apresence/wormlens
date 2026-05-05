@@ -192,14 +192,9 @@ def _print_sessions_table(rows: list[dict]):
         print("No sessions found.", file=sys.stderr)
         return
 
-    source_types = set(r.get("source_type", "") for r in rows)
-    multi_source = len(source_types) > 1
-
     has_matches = any("match_count" in r for r in rows)
 
-    header = ""
-    if multi_source:
-        header += "S "
+    header = "S "
     header += f"{'SESSION ID':<38} {'SIZE':>8} {'USER':>6} {'ASST':>6} {'START':>20}"
     if has_matches:
         header += f"  {'MATCHES':>7}"
@@ -227,9 +222,7 @@ def _print_sessions_table(rows: list[dict]):
                 preview = ""
         user_count = row.get("user_count", row.get("turn_count", 0))
         asst_count = row.get("assistant_count", 0)
-        line = ""
-        if multi_source:
-            line += _SOURCE_CHAR.get(row.get("source_type", ""), "?") + " "
+        line = _SOURCE_CHAR.get(row.get("source_type", ""), "?") + " "
         line += (
             f"{row['session_id']:<38} {size_str:>8} "
             f"{user_count:>6} {asst_count:>6} "
