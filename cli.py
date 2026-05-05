@@ -74,8 +74,8 @@ Examples:
                        help="Target repo root for skill install/uninstall (default: auto-detect from cwd)")
     modes.add_argument("--grep", default=None, metavar="PATTERN",
                        help="Search all sessions for regex pattern")
-    modes.add_argument("--summary-stats", action="store_true",
-                       help="Print session stats (turns, messages, size) without extracting")
+    modes.add_argument("--summary-stats", "--stats", action="store_true",
+                       help="Print session stats (turns, tokens, size) without extracting")
     modes.add_argument("--doctor", action="store_true",
                        help="Run diagnostics (provider imports, session discovery, env)")
     modes.add_argument("--launch", action="store_true",
@@ -347,6 +347,15 @@ def _print_summary_stats(sessions: list, input_paths: list) -> None:
         sum(len(m.text.encode("utf-8")) for m in s.messages)
         for s in sessions
     )
+    total_chars = sum(
+        sum(len(m.text) for m in s.messages)
+        for s in sessions
+    )
+    total_words = sum(
+        sum(len(m.text.split()) for m in s.messages)
+        for s in sessions
+    )
+    tokens_approx = int(total_chars / 3.0)
 
     size_str = (
         f"{total_bytes / (1024 * 1024):.1f}MB"
@@ -359,7 +368,10 @@ def _print_summary_stats(sessions: list, input_paths: list) -> None:
     print(f"Assistant turns:  {total_asst}")
     print(f"Display messages: {total_display}")
     print(f"Total messages:  {total_msgs} (incl. tool calls, thinking, etc.)")
-    print(f"Approx size:     {size_str}")
+    print(f"Words:           {total_words}")
+    print(f"Chars:           {total_chars}")
+    print(f"Bytes:           {size_str}")
+    print(f"Tokens (approx): {tokens_approx}")
     print(f"Source file(s):  {', '.join(p.name for p in input_paths)}")
 
     # Per-session breakdown when multiple sessions
@@ -861,6 +873,9 @@ def _do_handoff(session_id_prefix: str, handoff_marker_path: Path):
 
 def main():
     parser = _build_parser()
+    if len(sys.argv) == 1:
+        parser.print_help()
+        sys.exit(0)
     args = parser.parse_args()
 
     if args.install_skill:

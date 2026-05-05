@@ -225,10 +225,12 @@ def format_md(
     lines.append(body)
 
     full_body = "\n".join(lines)
+    tag = "wl-recall-caveat" if recall else 'wormlens-extract format="md"'
+    close_tag = tag.split()[0]
     return (
-        '<wormlens-extract format="md">\n'
+        f"<{tag}>\n"
         f"{full_body}\n"
-        "</wormlens-extract>"
+        f"</{close_tag}>"
     )
 
 
@@ -359,10 +361,12 @@ def format_chat(
     lines.append(body)
 
     full_body = "\n".join(lines)
+    tag = "wl-recall-caveat" if recall else 'wormlens-extract format="chat"'
+    close_tag = tag.split()[0]
     return (
-        '<wormlens-extract format="chat">\n'
+        f"<{tag}>\n"
         f"{full_body}\n"
-        "</wormlens-extract>"
+        f"</{close_tag}>"
     )
 
 
@@ -392,10 +396,12 @@ def format_txt(sessions: list[ChatSession], recall: bool = False) -> str:
             lines.append(f"[{_msg_label(msg)}] {msg.text}")
 
     body = "\n".join(lines)
+    tag = "wl-recall-caveat" if recall else 'wormlens-extract format="txt"'
+    close_tag = tag.split()[0]
     return (
-        '<wormlens-extract format="txt">\n'
+        f"<{tag}>\n"
         f"{body}\n"
-        "</wormlens-extract>"
+        f"</{close_tag}>"
     )
 
 
