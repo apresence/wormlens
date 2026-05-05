@@ -51,12 +51,13 @@ wl --summary-stats                   # show session statistics
 
 ## Sources
 
-| Source | Flag | Auto-detect | Session Location |
-|--------|------|-------------|------------------|
-| Claude Code | `--source cc` | `type` + `sessionId` + `timestamp` keys | `$CLAUDE_CONFIG_DIR/projects/**/*.jsonl` |
-| VS Code Copilot | `--source vscode` | `kind` + `v` keys | `%APPDATA%/Code/User/workspaceStorage/*/chatSessions/*.jsonl` |
+| Source | Flag | S | Auto-detect | Session Location |
+|--------|------|---|-------------|------------------|
+| Claude Code | `--source cc` | C | `type` + `sessionId` + `timestamp` keys | `$CLAUDE_CONFIG_DIR/projects/**/*.jsonl` |
+| VS Code Copilot | `--source vscode` | V | `kind` + `v` keys | `%APPDATA%/Code/User/workspaceStorage/*/chatSessions/*.jsonl` |
+| WormLens extract | `--source wl` | W | `<wormlens-extract>` or `<wl-recall-caveat>` wrapper | File input only (no discovery) |
 
-Auto-detection examines the first record in the file. Default is Claude Code when no input is given.
+Auto-detection examines the first record in the file. `--list-sessions` scans all providers and shows a one-character source column (S). Timestamps are UTC.
 
 ## Filtering
 

@@ -38,8 +38,8 @@ Examples:
   wl --full                            # full CC session (ignore compacts)
   wl --source vscode                   # latest VS Code Copilot session
   wl session.jsonl                     # auto-detect source from file
-  wl --list-sessions                   # list CC sessions
-  wl --list-sessions --source vscode   # list VS Code sessions
+  wl --list-sessions                   # list all sessions (S column: C/V/W)
+  wl --list-sessions --source vscode   # list VS Code sessions only
   wl -t 20                             # last 20 messages
   wl --format jsonl --all -o full.jsonl
   wl *.jsonl --merge -o merged.md
