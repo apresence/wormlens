@@ -183,57 +183,62 @@ Examples:
     return p
 
 
+_SOURCE_CHAR = {"cc": "C", "vscode": "V", "wl": "W"}
+
+
 def _print_sessions_table(rows: list[dict]):
     """Print a formatted table of session metadata."""
     if not rows:
         print("No sessions found.", file=sys.stderr)
         return
 
-    source_type = rows[0].get("source_type", "")
+    source_types = set(r.get("source_type", "") for r in rows)
+    multi_source = len(source_types) > 1
 
     has_matches = any("match_count" in r for r in rows)
 
-    if source_type == "cc":
-        header = f"{'SESSION ID':<38} {'SIZE':>8} {'USER':>6} {'ASST':>6} {'START':>20}"
-        if has_matches:
-            header += f"  {'MATCHES':>7}"
-        header += "  PREVIEW"
-        print(header)
-        print("-" * (138 if has_matches else 130))
-        for row in rows:
-            size_kb = row["size"] / 1024
-            size_str = f"{size_kb / 1024:.1f}MB" if size_kb >= 1024 else f"{size_kb:.0f}KB"
-            start = row.get("start_ts", "")[:16]
-            last_checkpoint = row.get("last_checkpoint", "")
-            wl_summary = row.get("wl_summary", "")
-            if last_checkpoint:
-                preview = last_checkpoint
-            elif wl_summary:
-                preview = wl_summary
+    header = ""
+    if multi_source:
+        header += "S "
+    header += f"{'SESSION ID':<38} {'SIZE':>8} {'USER':>6} {'ASST':>6} {'START':>20}"
+    if has_matches:
+        header += f"  {'MATCHES':>7}"
+    header += "  PREVIEW"
+    print(header)
+    print("-" * (140 if has_matches else 132))
+    for row in rows:
+        size_kb = row["size"] / 1024
+        size_str = f"{size_kb / 1024:.1f}MB" if size_kb >= 1024 else f"{size_kb:.0f}KB"
+        start = row.get("start_ts", "")[:16]
+        last_checkpoint = row.get("last_checkpoint", "")
+        wl_summary = row.get("wl_summary", "")
+        if last_checkpoint:
+            preview = last_checkpoint
+        elif wl_summary:
+            preview = wl_summary
+        else:
+            preview_msgs = row.get("preview", [])
+            title = row.get("title", "")
+            if preview_msgs:
+                preview = " | ".join(preview_msgs)[:80]
+            elif title:
+                preview = title[:80]
             else:
-                preview_msgs = row.get("preview", [])
-                preview = " | ".join(preview_msgs)[:80] if preview_msgs else ""
-            line = (
-                f"{row['session_id']:<38} {size_str:>8} "
-                f"{row.get('user_count', 0):>6} {row.get('assistant_count', 0):>6} "
-                f"{start:>20}"
-            )
-            if has_matches:
-                line += f"  {row.get('match_count', 0):>7}"
-            line += f"  {preview}"
-            print(line)
-    else:
-        print(f"{'SESSION ID':<38} {'SIZE':>8} {'TURNS':>6} {'TITLE':<40} {'DATE':>24}")
-        print("-" * 120)
-        for row in rows:
-            size_kb = row["size"] / 1024
-            size_str = f"{size_kb / 1024:.1f}MB" if size_kb >= 1024 else f"{size_kb:.0f}KB"
-            title = row.get("title", "")[:40]
-            start = row.get("start_ts", "")[:19]
-            print(
-                f"{row['session_id']:<38} {size_str:>8} {row.get('turn_count', 0):>6} "
-                f"{title:<40} {start:>24}"
-            )
+                preview = ""
+        user_count = row.get("user_count", row.get("turn_count", 0))
+        asst_count = row.get("assistant_count", 0)
+        line = ""
+        if multi_source:
+            line += _SOURCE_CHAR.get(row.get("source_type", ""), "?") + " "
+        line += (
+            f"{row['session_id']:<38} {size_str:>8} "
+            f"{user_count:>6} {asst_count:>6} "
+            f"{start:>20}"
+        )
+        if has_matches:
+            line += f"  {row.get('match_count', 0):>7}"
+        line += f"  {preview}"
+        print(line)
 
     print(f"\n{len(rows)} session(s) found")
 
