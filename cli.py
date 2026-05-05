@@ -520,9 +520,15 @@ def _get_hook_source() -> Path:
 
 
 def _find_repo_root(start: Path | None = None) -> Path | None:
-    """Walk up from start (default: cwd) looking for a repo root."""
+    """Walk up from start (default: cwd) looking for a repo root.
+
+    Stops at home dir to avoid matching ~/.claude as a project root.
+    """
+    home = Path.home().resolve()
     d = (start or Path.cwd()).resolve()
     for _ in range(20):
+        if d == home:
+            break
         if (d / ".git").exists() or (d / ".github").exists() or (d / ".claude").exists():
             return d
         parent = d.parent
