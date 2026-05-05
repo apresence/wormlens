@@ -488,7 +488,11 @@ def _run_doctor():
 
 # -- Skill install/uninstall -------------------------------------------------
 
-_SKILL_DIRS = [".github/skills/wormlens", ".claude/skills/wormlens"]
+_SKILL_REL_DIR = ".claude/skills/wormlens"
+_SETTINGS_REL = ".claude/settings.json"
+_HOOK_CMD = "python3 .claude/skills/wormlens/wl-hook.py"
+_HOOK_MARKER = "wormlens/wl-hook.py"  # substring used to identify our entries
+_HOOK_EVENTS = ("UserPromptSubmit", "PreToolUse")
 
 
 def _get_skill_source() -> Path:
@@ -514,8 +518,108 @@ def _find_repo_root(start: Path | None = None) -> Path | None:
     return None
 
 
+def _read_settings(path: Path) -> dict:
+    import json as _json
+    if not path.is_file():
+        return {}
+    try:
+        return _json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return {}
+
+
+def _write_settings(path: Path, data: dict) -> None:
+    import json as _json
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def _wl_entry() -> dict:
+    return {"matcher": "", "hooks": [{"type": "command", "command": _HOOK_CMD}]}
+
+
+def _entry_is_wormlens(entry: dict) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    for h in entry.get("hooks", []) or []:
+        if isinstance(h, dict) and _HOOK_MARKER in str(h.get("command", "")):
+            return True
+    return False
+
+
+def _install_settings_hooks(root: Path) -> list[str]:
+    """Merge wormlens hook entries into project settings.json. Returns changes."""
+    path = root / _SETTINGS_REL
+    data = _read_settings(path)
+    changes = []
+
+    # Top-level statusLine (CC reads context_window stats here every render)
+    sl = data.get("statusLine")
+    if not (isinstance(sl, dict) and _HOOK_MARKER in str(sl.get("command", ""))):
+        data["statusLine"] = {"type": "command", "command": _HOOK_CMD}
+        changes.append("statusLine")
+
+    hooks = data.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        hooks = {}
+        data["hooks"] = hooks
+
+    for event in _HOOK_EVENTS:
+        arr = hooks.setdefault(event, [])
+        if not isinstance(arr, list):
+            arr = []
+            hooks[event] = arr
+        if any(_entry_is_wormlens(e) for e in arr):
+            continue
+        arr.append(_wl_entry())
+        changes.append(f"hooks.{event}")
+
+    if changes:
+        _write_settings(path, data)
+    return changes
+
+
+def _uninstall_settings_hooks(root: Path) -> list[str]:
+    """Remove wormlens hook entries from project settings.json. Returns changes."""
+    path = root / _SETTINGS_REL
+    if not path.is_file():
+        return []
+    data = _read_settings(path)
+    changes = []
+
+    sl = data.get("statusLine")
+    if isinstance(sl, dict) and _HOOK_MARKER in str(sl.get("command", "")):
+        del data["statusLine"]
+        changes.append("statusLine")
+
+    hooks = data.get("hooks")
+    if isinstance(hooks, dict):
+        for event in list(hooks.keys()):
+            arr = hooks.get(event)
+            if not isinstance(arr, list):
+                continue
+            kept = [e for e in arr if not _entry_is_wormlens(e)]
+            if len(kept) != len(arr):
+                changes.append(f"hooks.{event}")
+                if kept:
+                    hooks[event] = kept
+                else:
+                    del hooks[event]
+        if not hooks:
+            del data["hooks"]
+
+    if changes:
+        if data:
+            _write_settings(path, data)
+        else:
+            path.unlink()
+    return changes
+
+
 def _install_skill(target_dir: str | None):
-    """Install the wormlens SKILL.md and wl-hook.py into a repo."""
+    """Install the wormlens SKILL.md, wl-hook.py, and managed hooks into a repo."""
     skill_source = _get_skill_source()
     hook_source = _get_hook_source()
     if not skill_source.is_file():
@@ -535,35 +639,27 @@ def _install_skill(target_dir: str | None):
 
     skill_content = skill_source.read_text(encoding="utf-8")
     hook_content = hook_source.read_text(encoding="utf-8")
-    installed = []
 
-    def _write_pair(parent: Path) -> None:
-        parent.mkdir(parents=True, exist_ok=True)
-        skill_dest = parent / "SKILL.md"
-        hook_dest = parent / "wl-hook.py"
-        skill_dest.write_text(skill_content, encoding="utf-8")
-        hook_dest.write_text(hook_content, encoding="utf-8")
-        hook_dest.chmod(0o755)
-        installed.append(str(skill_dest.relative_to(root)))
-        installed.append(str(hook_dest.relative_to(root)))
+    skill_dir = root / _SKILL_REL_DIR
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    skill_dest = skill_dir / "SKILL.md"
+    hook_dest = skill_dir / "wl-hook.py"
+    skill_dest.write_text(skill_content, encoding="utf-8")
+    hook_dest.write_text(hook_content, encoding="utf-8")
+    hook_dest.chmod(0o755)
 
-    for rel in _SKILL_DIRS:
-        parent = root / rel
-        # Only install into dirs whose parent already exists (.github/ or .claude/)
-        framework_dir = parent.parent.parent  # e.g. .github or .claude
-        if not framework_dir.is_dir():
-            continue
-        _write_pair(parent)
+    print(f"Installed: {skill_dest.relative_to(root)}")
+    print(f"Installed: {hook_dest.relative_to(root)}")
 
-    if not installed:
-        _write_pair(root / ".claude" / "skills" / "wormlens")
-
-    for p in installed:
-        print(f"Installed: {p}")
+    changes = _install_settings_hooks(root)
+    for c in changes:
+        print(f"Configured: {_SETTINGS_REL} ({c})")
+    if not changes:
+        print(f"Already configured: {_SETTINGS_REL}")
 
 
 def _uninstall_skill(target_dir: str | None):
-    """Remove the wormlens skill from a repo."""
+    """Remove the wormlens skill and managed hooks from a repo."""
     import shutil
 
     if target_dir:
@@ -574,18 +670,21 @@ def _uninstall_skill(target_dir: str | None):
             print("Error: no repo root found from cwd. Use --skill-target DIR.", file=sys.stderr)
             sys.exit(1)
 
+    skill_dir = root / _SKILL_REL_DIR
     removed = []
-    for rel in _SKILL_DIRS:
-        skill_dir = root / rel
-        if skill_dir.is_dir():
-            shutil.rmtree(skill_dir)
-            removed.append(str(skill_dir.relative_to(root)))
+    if skill_dir.is_dir():
+        shutil.rmtree(skill_dir)
+        removed.append(str(skill_dir.relative_to(root)))
 
-    if removed:
-        for p in removed:
-            print(f"Removed: {p}")
-    else:
-        print("No wormlens skill found to remove.", file=sys.stderr)
+    changes = _uninstall_settings_hooks(root)
+
+    for p in removed:
+        print(f"Removed: {p}")
+    for c in changes:
+        print(f"Cleaned: {_SETTINGS_REL} ({c})")
+
+    if not removed and not changes:
+        print("No wormlens install found to remove.", file=sys.stderr)
 
 
 # -- Grep search -------------------------------------------------------------

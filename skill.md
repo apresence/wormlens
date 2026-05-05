@@ -2,22 +2,6 @@
 name: wormlens
 description: 'Extract, search, and display chat history from Claude Code or VS Code Copilot sessions. USE FOR: reviewing previous conversations, pulling episodic memory from past sessions, listing available sessions, extracting specific sessions by ID, searching conversation history with regex. DO NOT USE FOR: modifying chat history, real-time chat monitoring.'
 argument-hint: 'Describe what chat history you need, e.g. "last session", "list sessions", "session abc-123"'
-hooks:
-  StatusLine:
-    - matcher: ""
-      hooks:
-        - type: command
-          command: "python3 .claude/skills/wormlens/wl-hook.py"
-  UserPromptSubmit:
-    - matcher: ""
-      hooks:
-        - type: command
-          command: "python3 .claude/skills/wormlens/wl-hook.py"
-  PreToolUse:
-    - matcher: ""
-      hooks:
-        - type: command
-          command: "python3 .claude/skills/wormlens/wl-hook.py"
 ---
 
 # wormlens -- Lossless Episodic Memory
