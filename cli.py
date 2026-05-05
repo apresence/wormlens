@@ -1051,7 +1051,13 @@ def main():
         return
 
     if args.list_sessions:
-        rows = source.list_sessions_metadata()
+        if args.source != "auto":
+            list_sources = [source]
+        else:
+            list_sources = [cls() for cls in PROVIDERS.values()]
+        rows = []
+        for src in list_sources:
+            rows.extend(src.list_sessions_metadata())
         if min_turns is None and min_bytes is None:
             min_turns = 2  # default: filter out noise sessions
         rows = _filter_session_rows(rows, min_turns, min_bytes)
