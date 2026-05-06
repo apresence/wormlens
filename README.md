@@ -34,20 +34,28 @@ python wormlens.pyz [INPUT...] [options]
 ## Quick Start
 
 ```bash
-wl                                   # latest CC session, recovery mode
-wl --full                            # full CC session (ignore compacts)
-wl --source vscode                   # latest VS Code Copilot session
-wl session.jsonl                     # auto-detect source from file
-wl --list-sessions                   # list CC sessions
+wl --list-sessions                   # list CC sessions (start here)
 wl --list-sessions --source vscode   # list VS Code sessions
-wl -t 20                             # last 20 messages
-wl --format jsonl --all -o full.jsonl
-wl *.jsonl --merge -o merged.md
-wl --session abc-123,def-456         # extract specific CC session(s)
-wl --index 5-10                      # extract turns 5 through 10
-wl --index 42                        # extract a single turn
+wl --recall --session <UUID>         # extract one session for agent recall
+wl --session <UUID>                  # extract specific CC session
+wl --session abc-123,def-456         # extract multiple sessions
+wl session.jsonl                     # extract from explicit file (auto-detect source)
+wl --source vscode --session <UUID>  # explicit VS Code session
+wl --full --session <UUID>           # full session (ignore compact boundaries)
+wl -t 20 --session <UUID>            # last 20 messages of a session
+wl --index 5-10 --session <UUID>     # extract turns 5 through 10
+wl --index 42 --session <UUID>       # extract a single turn
+wl --grep "pattern"                  # search across all sessions
+wl --format jsonl --all --session <UUID> -o full.jsonl
+wl *.jsonl --merge -o merged.md      # merge explicit JSONL files
 wl --summary-stats                   # show session statistics
 ```
+
+Bare `wl` (no args, no `--session`) attempts recovery-mode auto-select from
+the project's CC session directory; it only succeeds when the current working
+directory maps to a project that has CC sessions on disk. For deterministic
+extraction in scripts and CI, always pass `--session <UUID>` (use
+`--list-sessions` to discover IDs).
 
 ## Sources
 
@@ -158,7 +166,7 @@ wl --grep "pattern" --source cc          # search specific source
 ## Building the Zipapp
 
 ```bash
-python wormlens/build_pyz.py
+python3 build_pyz.py
 # Output: .copilot/wormlens.pyz
 ```
 
@@ -166,26 +174,37 @@ Produces a single-file `wormlens.pyz` that can be distributed and run with `pyth
 
 ## Architecture
 
+The repo uses a flat layout: the project root **is** the `wormlens` package
+(via `[tool.setuptools.package-dir]` mapping `"wormlens" = "."`). Modules like
+`cli.py`, `pipeline.py`, etc. live at the project root, not in a nested
+`wormlens/` subdirectory.
+
 ```
-wormlens/
-├── __init__.py          # Package version
-├── __main__.py          # python -m entry point
-├── cli.py               # Argument parsing, orchestration
-├── models.py            # ChatMessage, ChatSession, FilterOpts
-├── pipeline.py          # discover -> parse -> filter -> sort
-├── formatters.py        # md/txt/jsonl output + VS Code markdown cleanup
-├── build_pyz.py         # Zipapp builder
-├── harness/
-│   ├── __init__.py      # Harness package
-│   ├── wormlens.py      # Outer loop (wl launch)
-│   └── wl-hook.py       # StatusLine + context injection hook
-└── providers/
-    ├── __init__.py      # Auto-discovery registry
-    ├── _base.py         # Provider ABC
-    ├── claude_code/
-    │   └── parser.py    # CC backend
-    └── vscode_copilot/
-        └── parser.py    # VS Code Copilot backend
+wormlens/                  (project root = python package)
+  __init__.py              # Package version
+  __main__.py              # python -m entry point
+  cli.py                   # Argument parsing, orchestration
+  models.py                # ChatMessage, ChatSession, FilterOpts
+  pipeline.py              # discover -> parse -> filter -> sort
+  formatters.py            # md/txt/jsonl output
+  build_pyz.py             # Zipapp builder
+  skill.md                 # Skill manifest (also bundled in package)
+  pyproject.toml
+  README.md
+  LICENSE
+  CLAUDE.md
+  CHANGELOG.md
+  tests/                   # pytest suite (see "Running tests")
+  harness/
+    __init__.py
+    wormlens.py            # Outer loop (wl launch)
+    wl-hook.py             # StatusLine + context injection hook
+  providers/
+    __init__.py            # Auto-discovery registry
+    _base.py               # Provider ABC
+    claude_code/parser.py
+    vscode_copilot/parser.py
+    wl_extract/parser.py
 ```
 
 ## Diagnostics
@@ -227,6 +246,23 @@ For debugging, the harness can also be run standalone:
 ```bash
 python3 -m wormlens.harness.wormlens --prompt "echo hi"
 ```
+
+## Running tests
+
+```bash
+pip install -e .[dev]
+pytest
+```
+
+The suite (`tests/`) covers CLI argparse, JSONL parser edge cases, formatter
+output shape, settings.json merge/unmerge, skill install/uninstall, recall and
+handoff gating, checkpoint extraction, and the .wl round-trip. All fixtures are
+synthetic ASCII files under `tests/fixtures/` and `tmp_path` -- nothing touches
+your real `~/.claude` tree.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ## Known Limitations
 

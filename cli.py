@@ -25,6 +25,7 @@ from .pipeline import (
     resolve_source,
 )
 from .providers import PROVIDERS
+from .providers.wl_extract.parser import WlFormatError
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -34,7 +35,7 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  wl                                   # latest CC session, recovery mode
+  wl --recall --session <UUID>         # recover prior session into context
   wl --full                            # full CC session (ignore compacts)
   wl --source vscode                   # latest VS Code Copilot session
   wl session.jsonl                     # auto-detect source from file
@@ -49,6 +50,7 @@ Examples:
   wl --index 42,55,80                  # specific turns
   wl --index 42-80,90-100             # multiple ranges
   wl --summary-stats                   # session stats without output
+  wl launch --prompt "build X"         # outer-loop harness for continuity
         """,
     )
 
@@ -78,8 +80,6 @@ Examples:
                        help="Print session stats (turns, tokens, size) without extracting")
     modes.add_argument("--doctor", action="store_true",
                        help="Run diagnostics (provider imports, session discovery, env)")
-    modes.add_argument("--launch", action="store_true",
-                       help="Launch the wormlens outer-loop harness")
     modes.add_argument("--recall", action="store_true",
                        help="Agent recall mode: strip frontmatter, add instruction caveat, stdout")
     modes.add_argument("--handoff", action="store_true",
@@ -87,19 +87,10 @@ Examples:
     modes.add_argument("--checkpoints", action="store_true",
                        help="Extract <wl-checkpoint> tags as ordered list (one per line)")
 
-    launch = p.add_argument_group("launch options (used with --launch)")
-    launch.add_argument("--prompt", default=None,
-                        help="Initial task prompt for the CC session")
-    launch.add_argument("--ctx-limit", type=int, default=90,
-                        help="Context used %% for URGENT injection (default: 90)")
-    launch.add_argument("--hard-kill", type=int, default=99,
-                        help="Context used %% for force kill (default: 99)")
-    launch.add_argument("--grace", type=float, default=60.0,
-                        help="Seconds after URGENT before forced handoff (default: 60)")
-    launch.add_argument("--poll-interval", type=float, default=2.0,
-                        help="Harness poll interval in seconds (default: 2.0)")
-    launch.add_argument("--project-dir", default=None,
-                        help="Project directory for trust dialog (default: cwd)")
+    # Note: `wl launch [...]` is dispatched as a subcommand at the top of
+    # _main(); its arguments (--prompt, --ctx-limit, --hard-kill, --grace,
+    # --poll-interval, --project-dir) are parsed by harness.wormlens.main()'s
+    # own argparse, not this one. Run `wl launch --help` for that flag set.
 
     grep = p.add_argument_group("grep options")
     grep.add_argument("-A", "--after", type=int, default=0, metavar="N",
@@ -298,6 +289,11 @@ def _filter_by_index(
     For CC sessions (source_type == "cc"), the turn number is msg.source_line
     (1-based JSONL line number).
 
+    For wl-sourced re-imports (source_type == "wl"), msg.source_line carries
+    the original CC JSONL line number that the wl_extract parser preserved
+    from the upstream extract -- so a CC -> wl chain can still be addressed
+    by the original line number, which is the whole point of the round-trip.
+
     For VS Code sessions, the turn number is the sequential counter that the
     formatters assign: increments on each user/msg message.  All messages
     sharing a turn number (user prompt + assistant reply) are kept together.
@@ -305,7 +301,7 @@ def _filter_by_index(
     from .formatters import _is_display_msg  # noqa: local import to avoid circular
 
     for session in sessions:
-        uses_line_index = (session.source_type == "cc")
+        uses_line_index = (session.source_type in ("cc", "wl"))
 
         if uses_line_index:
             session.messages = [
@@ -434,19 +430,20 @@ def _run_doctor():
     print("wormlens doctor -- environment diagnostics\n")
 
     # 1. Provider imports
-    import importlib
-    provider_dir = Path(__file__).parent / "providers"
-    for entry in sorted(provider_dir.iterdir()):
-        if not entry.is_dir() or entry.name.startswith("_"):
-            continue
-        if not (entry / "__init__.py").is_file():
-            continue
-        module_name = f"wormlens.providers.{entry.name}"
-        try:
-            importlib.import_module(module_name)
-            print(ok(f"Provider import: {entry.name}"))
-        except Exception as exc:
-            print(fail(f"Provider import: {entry.name} -- {exc}"))
+    # PROVIDERS is auto-populated by providers/__init__._discover_providers(),
+    # which is zipimport-safe (filesystem walk with importlib fallback).
+    # Iterating PROVIDERS here avoids the previous Path(__file__).parent /
+    # "providers" .iterdir() pattern that raised NotADirectoryError when
+    # wormlens runs from a zipapp -- inside a zip, __file__ is a virtual path,
+    # not a real directory. The auto-discovery already imported these modules,
+    # so a successful entry in PROVIDERS implies a successful import.
+    if not PROVIDERS:
+        print(fail("No providers registered (provider auto-discovery failed)"))
+    else:
+        for pid, cls in sorted(PROVIDERS.items()):
+            label = getattr(cls, "provider_label", pid)
+            module = getattr(cls, "__module__", "?")
+            print(ok(f"Provider import: {pid} ({label}) [{module}]"))
 
     # 2. CLAUDE_CONFIG_DIR / default ~/.claude
     claude_config = os.environ.get("CLAUDE_CONFIG_DIR")
@@ -478,6 +475,13 @@ def _run_doctor():
         print(fail(f"CC session discovery error: {exc}"))
 
     # 4. VS Code session discovery
+    # VS Code Copilot is an OPTIONAL provider. A host without VS Code
+    # installed should not be reported as a failure. We split the report
+    # into two tiers: if the workspaceStorage root is absent the provider
+    # is "not installed" (INFO); if it exists but is empty/unreadable, that
+    # is closer to a real misconfiguration (still reported, but as INFO
+    # since the user may not run VS Code on this host). Provider not
+    # registered is the only true FAIL here.
     try:
         vsc_cls = PROVIDERS.get("vscode")
         if vsc_cls:
@@ -485,7 +489,25 @@ def _run_doctor():
             if vsc_paths:
                 print(ok(f"VS Code sessions found: {len(vsc_paths)}"))
             else:
-                print(fail("VS Code sessions: none found"))
+                # Probe whether VS Code itself is present on this host.
+                vscode_present = False
+                try:
+                    from .providers.vscode_copilot.parser import (
+                        _get_workspace_store as _vsc_ws_root,
+                    )
+                    vscode_present = _vsc_ws_root().is_dir()
+                except Exception:
+                    vscode_present = False
+                if vscode_present:
+                    print(info(
+                        "VS Code sessions: none found "
+                        "(VS Code installed but no Copilot chat sessions; optional)"
+                    ))
+                else:
+                    print(info(
+                        "VS Code sessions: none found "
+                        "(VS Code Copilot not detected; optional provider)"
+                    ))
         else:
             print(fail("VS Code provider not registered"))
     except Exception as exc:
@@ -560,21 +582,76 @@ def _find_repo_root(start: Path | None = None) -> Path | None:
     return None
 
 
+class SettingsCorruptError(Exception):
+    """Raised when an existing settings.json cannot be parsed.
+
+    The install/uninstall handlers convert this to a non-zero exit with a
+    user-facing message, so we never silently overwrite a user's broken-but-
+    recoverable settings.json (e.g. mid-edit, with a typo or comment).
+    """
+
+    def __init__(self, path: Path, detail: str):
+        self.path = path
+        self.detail = detail
+        super().__init__(f"settings.json at {path} is corrupt JSON: {detail}")
+
+
 def _read_settings(path: Path) -> dict:
+    """Load settings.json or return {} if absent.
+
+    Raises SettingsCorruptError if the file exists but does not parse as
+    JSON (or cannot be read at all). Callers must catch this and exit
+    rather than overwrite -- previously this returned {} on parse failure,
+    which caused _write_settings to silently clobber the user's file.
+    """
     import json as _json
     if not path.is_file():
         return {}
     try:
-        return _json.loads(path.read_text(encoding="utf-8"))
-    except (ValueError, OSError):
+        text = path.read_text(encoding="utf-8")
+    except OSError as e:
+        raise SettingsCorruptError(path, f"cannot read file ({e})") from e
+    if not text.strip():
         return {}
+    try:
+        return _json.loads(text)
+    except ValueError as e:
+        raise SettingsCorruptError(path, str(e)) from e
 
 
 def _write_settings(path: Path, data: dict) -> None:
+    """Atomically write settings.json, preserving a symlink at `path`.
+
+    Without the symlink branch, `tmp.replace(path)` would rename(2) over
+    the symlink and silently turn it into a regular file -- breaking
+    setups where the user has symlinked .claude/settings.json into a
+    dotfiles repo. When `path` is a symlink we resolve it and write
+    THROUGH the symlink (writing the target file directly). A broken
+    symlink (target's parent dir does not exist) is rejected with a
+    clear error rather than papered over.
+    """
     import json as _json
+    payload = _json.dumps(data, indent=2) + "\n"
+    if path.is_symlink():
+        real = path.resolve()
+        if not real.parent.is_dir():
+            print(
+                f"Error: settings.json at {path} is a broken symlink "
+                f"(target {real} unreachable). Repair or remove the "
+                f"symlink before --install-skill / --uninstall-skill.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        # Write directly to the resolved target. We do NOT use a
+        # tempfile + rename here, because rename(2) over a symlink is
+        # exactly the bug we are avoiding. The symlink itself is left
+        # intact; only the file it points to is updated.
+        real.write_text(payload, encoding="utf-8")
+        return
+
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(_json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    tmp.write_text(payload, encoding="utf-8")
     tmp.replace(path)
 
 
@@ -597,11 +674,30 @@ def _install_settings_hooks(root: Path) -> list[str]:
     data = _read_settings(path)
     changes = []
 
-    # Top-level statusLine (CC reads context_window stats here every render)
+    # Top-level statusLine (CC reads context_window stats here every render).
+    # Three cases:
+    #   1. absent              -> install wormlens's statusLine
+    #   2. present + wormlens  -> no-op (idempotent reinstall)
+    #   3. present + user's    -> warn to stderr, leave user's intact, continue
+    #                             with hook installs. wl:on indicator and
+    #                             authoritative ctx_used_pct injection are lost
+    #                             until the user composes manually, but no data
+    #                             loss across the install/uninstall round-trip.
     sl = data.get("statusLine")
-    if not (isinstance(sl, dict) and _HOOK_MARKER in str(sl.get("command", ""))):
+    if "statusLine" not in data or sl is None:
         data["statusLine"] = {"type": "command", "command": _HOOK_CMD}
         changes.append("statusLine")
+    elif isinstance(sl, dict) and _HOOK_MARKER in str(sl.get("command", "")):
+        pass
+    else:
+        print(
+            "Warning: Existing statusLine detected -- not overwriting; "
+            "wormlens hooks installed without statusLine. wl:on indicator "
+            "and authoritative ctx_used_pct injection require wormlens's "
+            "statusLine. Remove your existing statusLine and rerun "
+            "--install-skill, or compose via wrapper.",
+            file=sys.stderr,
+        )
 
     hooks = data.setdefault("hooks", {})
     if not isinstance(hooks, dict):
@@ -693,7 +789,16 @@ def _install_skill(target_dir: str | None):
     print(f"Installed: {skill_dest.relative_to(root)}")
     print(f"Installed: {hook_dest.relative_to(root)}")
 
-    changes = _install_settings_hooks(root)
+    try:
+        changes = _install_settings_hooks(root)
+    except SettingsCorruptError as e:
+        print(
+            f"Error: Existing settings.json at {e.path} is corrupt JSON; "
+            f"refusing to overwrite. Fix or remove it before "
+            f"--install-skill.\n  Detail: {e.detail}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     for c in changes:
         print(f"Configured: {_SETTINGS_REL} ({c})")
     if not changes:
@@ -718,7 +823,16 @@ def _uninstall_skill(target_dir: str | None):
         shutil.rmtree(skill_dir)
         removed.append(str(skill_dir.relative_to(root)))
 
-    changes = _uninstall_settings_hooks(root)
+    try:
+        changes = _uninstall_settings_hooks(root)
+    except SettingsCorruptError as e:
+        print(
+            f"Error: Existing settings.json at {e.path} is corrupt JSON; "
+            f"refusing to overwrite. Fix or remove it before "
+            f"--uninstall-skill.\n  Detail: {e.detail}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     for p in removed:
         print(f"Removed: {p}")
@@ -940,6 +1054,24 @@ def _do_checkpoints(args):
 
 
 def main():
+    try:
+        _main()
+    except WlFormatError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _main():
+    # Subcommand dispatch BEFORE argparse: `wl launch [...]` forwards its
+    # remaining argv to the harness's own argparse so the documented form
+    # `wl launch --prompt "..." --ctx-limit 85` works literally. Without
+    # this short-circuit, argparse would treat "launch" as a positional
+    # input file path and emit the misleading "Warning: launch not found".
+    if len(sys.argv) >= 2 and sys.argv[1] == "launch":
+        from .harness.wormlens import main as harness_main
+        rc = harness_main(sys.argv[2:])
+        sys.exit(rc or 0)
+
     parser = _build_parser()
     if len(sys.argv) == 1:
         parser.print_help()
@@ -954,23 +1086,6 @@ def main():
         return
     if args.doctor:
         _run_doctor()
-        return
-    if args.launch:
-        from .harness.wormlens import main as harness_main
-        argv = []
-        if args.prompt:
-            argv += ["--prompt", args.prompt]
-        if args.ctx_limit != 90:
-            argv += ["--ctx-limit", str(args.ctx_limit)]
-        if args.hard_kill != 99:
-            argv += ["--hard-kill", str(args.hard_kill)]
-        if args.grace != 60.0:
-            argv += ["--grace", str(args.grace)]
-        if args.poll_interval != 2.0:
-            argv += ["--poll-interval", str(args.poll_interval)]
-        if args.project_dir:
-            argv += ["--project-dir", args.project_dir]
-        harness_main(argv if argv else None)
         return
     if args.handoff:
         if not args.session:
@@ -1056,6 +1171,13 @@ def main():
         return
 
     if args.list_sessions:
+        if args.source == "wl":
+            print(
+                "Error: the wl provider does not support session discovery; "
+                "pass a .wl file path as input.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         if args.source != "auto":
             list_sources = [source]
         else:
@@ -1095,10 +1217,21 @@ def main():
             sessions = extract_sessions(src, paths, grep_opts, since_last_compact=False)
             all_sessions.extend(sessions)
 
-        _grep_sessions(all_sessions, args.grep,
-                       ignore_case=args.ignore_case,
-                       before=args.before, after=args.after)
-        return
+        total_matches = _grep_sessions(
+            all_sessions, args.grep,
+            ignore_case=args.ignore_case,
+            before=args.before, after=args.after,
+        )
+        # Per CHECKPOINT 2026-05-04: empty grep returns exit 1, hits exit 0.
+        # The --grep + --list-sessions branch already enforces this; this
+        # bare --grep branch was previously falling through to implicit 0.
+        if not total_matches:
+            print(
+                f"No matches for pattern '{args.grep}'.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        sys.exit(0)
 
     opts = FilterOpts(
         thinking=args.thinking,

@@ -73,7 +73,10 @@ def _load_session_state(filepath: Path) -> dict | None:
                 continue
             try:
                 entry = json.loads(line)
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, ValueError):
+                continue
+
+            if not isinstance(entry, dict):
                 continue
 
             kind = entry.get("kind")
@@ -397,7 +400,7 @@ class VSCodeCopilotProvider(Provider):
                         continue
                     try:
                         entry = json.loads(line)
-                    except json.JSONDecodeError:
+                    except (json.JSONDecodeError, ValueError):
                         return False
                     return (
                         isinstance(entry, dict)

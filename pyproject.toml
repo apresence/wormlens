@@ -17,9 +17,19 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Topic :: Software Development :: Libraries",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Utilities",
 ]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
 
 [project.scripts]
 wl = "wormlens.cli:main"
@@ -33,6 +43,7 @@ Repository = "https://github.com/apresence/wormlens"
 "wormlens.providers" = "providers"
 "wormlens.providers.claude_code" = "providers/claude_code"
 "wormlens.providers.vscode_copilot" = "providers/vscode_copilot"
+"wormlens.providers.wl_extract" = "providers/wl_extract"
 "wormlens.harness" = "harness"
 
 [tool.setuptools]
@@ -41,5 +52,10 @@ packages = [
     "wormlens.providers",
     "wormlens.providers.claude_code",
     "wormlens.providers.vscode_copilot",
+    "wormlens.providers.wl_extract",
     "wormlens.harness",
 ]
+
+[tool.setuptools.package-data]
+wormlens = ["skill.md"]
+"wormlens.harness" = ["wl-hook.py"]

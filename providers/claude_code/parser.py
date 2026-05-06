@@ -106,13 +106,27 @@ def _extract_text_from_content(content) -> str:
 
 
 def _extract_thinking(content) -> list[str]:
+    """Extract thinking blocks from content.
+
+    CC v2.1.116 frequently ships thinking blocks with empty `thinking`
+    text on disk -- only the `signature` field is populated. We emit a
+    placeholder marker for those so `--thinking` produces a record per
+    block (the user passed the flag; an empty stream would mislead).
+    """
     results = []
     if isinstance(content, list):
         for block in content:
             if isinstance(block, dict) and block.get("type") == "thinking":
                 thinking = block.get("thinking", "")
-                if thinking:
+                if thinking and thinking.strip():
                     results.append(thinking)
+                else:
+                    sig = block.get("signature", "")
+                    short = (sig[:16] + "...") if len(sig) > 16 else sig
+                    sig_attr = f" signature={short}" if short else ""
+                    results.append(
+                        f"[thinking redacted -- empty body on disk{sig_attr}]"
+                    )
     return results
 
 
@@ -202,6 +216,8 @@ def _find_last_compact_line(input_path: Path) -> int | None:
                 record = json.loads(raw_line)
             except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
                 continue
+            if not isinstance(record, dict):
+                continue
             if (record.get("type") == "system"
                     and record.get("subtype") == "compact_boundary"):
                 last_idx = idx
@@ -211,8 +227,22 @@ def _find_last_compact_line(input_path: Path) -> int | None:
 # -- Record processing ------------------------------------------------------
 
 
-def _process_record(record: dict, opts: FilterOpts) -> list[ChatMessage]:
-    """Process a single JSONL record into ChatMessage objects."""
+def _process_record(
+    record: dict,
+    opts: FilterOpts,
+    state: dict | None = None,
+) -> list[ChatMessage]:
+    """Process a single JSONL record into ChatMessage objects.
+
+    `state` carries cross-record bookkeeping (currently the set of
+    Bash tool_use IDs, used so `--bash` (without `--tools`) can emit
+    matching tool_result records).
+    """
+    if state is None:
+        state = {}
+    bash_ids: set = state.setdefault("bash_ids", set())
+    if not isinstance(record, dict):
+        return []
     rec_type = record.get("type", "")
     ts = record.get("timestamp", "")
     session_id = record.get("sessionId", "")
@@ -280,22 +310,52 @@ def _process_record(record: dict, opts: FilterOpts) -> list[ChatMessage]:
                 msg_type="system_inject" if is_system_inject else "msg",
             ))
 
-        if opts.tools and sender == "assistant":
+        # tool_use: emit when --tools (any tool), or when --bash for
+        # Bash-named tools (re-tagged as msg_type "bash" so they render
+        # as <bash_output> and are correctly labeled in the
+        # `including:` field). Track Bash tool_use IDs so the matching
+        # tool_result records can be emitted later.
+        if (opts.tools or opts.bash) and sender == "assistant":
             for tu in _extract_tool_uses(content):
-                out.append(ChatMessage(
-                    role="assistant", text=f"{tu['name']}\n{tu['input']}",
-                    timestamp=ts, session_id=session_id, msg_type="tool_use",
-                    metadata={"tool": tu["name"]},
-                ))
+                is_bash = (tu.get("name") == "Bash")
+                if is_bash and tu.get("id"):
+                    bash_ids.add(tu["id"])
+                if opts.tools:
+                    out.append(ChatMessage(
+                        role="assistant", text=f"{tu['name']}\n{tu['input']}",
+                        timestamp=ts, session_id=session_id, msg_type="tool_use",
+                        metadata={"tool": tu["name"]},
+                    ))
+                elif is_bash:
+                    body = tu['input'] or "[Bash command: empty]"
+                    out.append(ChatMessage(
+                        role="system", text=f"[Bash invocation]\n{body}",
+                        timestamp=ts, session_id=session_id, msg_type="bash",
+                        metadata={"tool": "Bash", "kind": "invocation",
+                                  "tool_use_id": tu.get("id", "")},
+                    ))
 
-        if opts.tools and sender == "user":
+        # tool_result: emit when --tools (any), or when --bash and the
+        # matching tool_use_id was a Bash invocation (re-tagged "bash").
+        if (opts.tools or opts.bash) and sender == "user":
             for tr in _extract_tool_results(content):
-                prefix = "[ERROR] " if tr["is_error"] else ""
-                out.append(ChatMessage(
-                    role="system", text=f"{prefix}{tr['text']}",
-                    timestamp=ts, session_id=session_id, msg_type="tool_result",
-                    metadata={"tool_use_id": tr["tool_use_id"]},
-                ))
+                is_bash_result = tr["tool_use_id"] in bash_ids
+                if opts.tools:
+                    prefix = "[ERROR] " if tr["is_error"] else ""
+                    out.append(ChatMessage(
+                        role="system", text=f"{prefix}{tr['text']}",
+                        timestamp=ts, session_id=session_id, msg_type="tool_result",
+                        metadata={"tool_use_id": tr["tool_use_id"]},
+                    ))
+                elif is_bash_result:
+                    prefix = "[ERROR] " if tr["is_error"] else ""
+                    out.append(ChatMessage(
+                        role="system",
+                        text=f"[Bash result]\n{prefix}{tr['text']}",
+                        timestamp=ts, session_id=session_id, msg_type="bash",
+                        metadata={"tool_use_id": tr["tool_use_id"],
+                                  "kind": "result"},
+                    ))
 
     elif rec_type == "progress":
         data = record.get("data", {})
@@ -311,7 +371,22 @@ def _process_record(record: dict, opts: FilterOpts) -> list[ChatMessage]:
             ))
 
         elif data_type == "bash_progress" and opts.bash:
-            output = data.get("output", "")
+            # CC v2.1.116 ships bash_progress records with empty `output`
+            # fields (the actual stdout is captured in the matching
+            # tool_result). Fall back to fullOutput, then to a synthesized
+            # marker line so the record carries content and is not
+            # silently dropped by the downstream skip_empty filter.
+            output = data.get("output", "") or data.get("fullOutput", "")
+            if not output.strip():
+                total_lines = data.get("totalLines", "?")
+                total_bytes = data.get("totalBytes", "?")
+                elapsed = data.get("elapsedTimeSeconds", "?")
+                task_id = data.get("taskId", "")
+                tag = f" task={task_id}" if task_id else ""
+                output = (
+                    f"[bash progress: lines={total_lines} bytes={total_bytes}"
+                    f" elapsed_s={elapsed}{tag}]"
+                )
             out.append(ChatMessage(
                 role="system", text=output,
                 timestamp=ts, session_id=session_id, msg_type="bash",
@@ -385,6 +460,7 @@ class ClaudeCodeProvider(Provider):
 
         messages_by_session: OrderedDict[str, list[ChatMessage]] = OrderedDict()
         saw_compact = False  # track compact_boundary for continuation summary detection
+        process_state: dict = {}  # cross-record state for _process_record
         compact_summaries: dict[str, str] = {}  # sid -> summary text
         checkpoints_by_session: dict[str, list[dict]] = {}
 
@@ -395,6 +471,8 @@ class ClaudeCodeProvider(Provider):
                 try:
                     record = json.loads(raw_line)
                 except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+                    continue
+                if not isinstance(record, dict):
                     continue
                 if session_id_filter and record.get("sessionId") != session_id_filter:
                     continue
@@ -430,7 +508,7 @@ class ClaudeCodeProvider(Provider):
                                         "text": hit,
                                     })
 
-                msgs = _process_record(record, opts)
+                msgs = _process_record(record, opts, process_state)
                 for msg in msgs:
                     msg.source_file = str(path)
                     msg.source_line = idx + 1  # 1-based line number
@@ -480,6 +558,8 @@ class ClaudeCodeProvider(Provider):
                     try:
                         record = json.loads(raw_line)
                     except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+                        continue
+                    if not isinstance(record, dict):
                         continue
                     rtype = record.get("type", "")
                     ts = record.get("timestamp", "")

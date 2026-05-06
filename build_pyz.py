@@ -17,7 +17,21 @@ PACKAGE_DIR = Path(__file__).parent
 OUTPUT = PACKAGE_DIR / ".copilot" / "wormlens.pyz"
 
 
+def _clean_build_artifacts():
+    """Remove stale build/ dist/ *.egg-info/ trees.
+
+    setuptools does not auto-purge these, so a wheel/sdist built after a
+    file rename or deletion can otherwise drag ghost modules from a prior
+    build into the new artifact (see R4_packaging M1).
+    """
+    for name in ("build", "dist"):
+        shutil.rmtree(PACKAGE_DIR / name, ignore_errors=True)
+    for egg in PACKAGE_DIR.glob("*.egg-info"):
+        shutil.rmtree(egg, ignore_errors=True)
+
+
 def main():
+    _clean_build_artifacts()
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
 
@@ -30,6 +44,11 @@ def main():
                 ".local", ".copilot", ".pytest_cache",
                 "build", "dist", "*.egg-info",
                 "*.pyz",
+                # Private project docs / scratch -- never ship publicly.
+                "CLAUDE.md", "AGENTS.md", "TODO.md", "NOTES.md",
+                "CHECKPOINT.md", "HANDOFF.md", "BENCHMARK_RESULTS.md",
+                "SHIP_REPORT.md", "tests", ".agent-ignore",
+                ".claude", ".vscode", ".idea",
             ),
         )
 

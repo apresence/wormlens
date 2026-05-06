@@ -13,12 +13,18 @@ Usage:
 """
 
 import argparse
+import errno
+import fcntl
 import json
 import os
+import pty
+import select
 import signal
 import subprocess
 import sys
+import termios
 import time
+import tty
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -35,7 +41,13 @@ CLAUDE_JSON = CLAUDE_DIR / ".claude.json"
 def log(msg: str):
     ts = datetime.now().strftime("%H:%M:%S")
     line = f"[{ts}] {msg}"
-    print(line, file=sys.stderr)
+    # Use \r\n so log lines render correctly when stdin is in raw mode
+    # (during the pty bridge in wait_for_exit_or_handoff).
+    try:
+        sys.stderr.write(line + "\r\n")
+        sys.stderr.flush()
+    except OSError:
+        pass
     try:
         with open(LOG_FILE, "a") as f:
             f.write(line + "\n")
@@ -131,59 +143,227 @@ def build_boot_prompt(
     return "\n".join(parts)
 
 
-def launch_claude(boot_prompt: str, session_id: str) -> subprocess.Popen:
+def _copy_winsize(src_fd: int, dst_fd: int):
+    """Copy terminal window size from src_fd to dst_fd."""
+    try:
+        s = fcntl.ioctl(src_fd, termios.TIOCGWINSZ, b"\0" * 8)
+        fcntl.ioctl(dst_fd, termios.TIOCSWINSZ, s)
+    except OSError:
+        pass
+
+
+def launch_claude(session_id: str):
+    """Launch claude in interactive mode under a fresh pty.
+
+    Returns (proc, master_fd). The boot prompt is NOT passed positionally --
+    in CC v2.1.116 a positional prompt forces --print/sdk-cli (one-shot)
+    mode, which exits in seconds and never fires StatusLine. The harness
+    delivers the boot prompt by writing to the master end of the pty after
+    CC's interactive UI is ready (signalled by ctx.json appearing).
+    """
+    master_fd, slave_fd = pty.openpty()
+    if sys.stdin.isatty():
+        _copy_winsize(sys.stdin.fileno(), slave_fd)
+
     cmd = [
         "claude",
         "--session-id", session_id,
         "--dangerously-skip-permissions",
-        boot_prompt,
     ]
-    log(f"Launching: claude --session-id {session_id[:8]}...")
-    return subprocess.Popen(cmd)
+    log(f"Launching (interactive pty): claude --session-id {session_id[:8]}...")
+    proc = subprocess.Popen(
+        cmd,
+        stdin=slave_fd,
+        stdout=slave_fd,
+        stderr=slave_fd,
+        close_fds=True,
+        preexec_fn=os.setsid,
+    )
+    os.close(slave_fd)
+
+    # non-blocking master so drain reads do not stall on EOF
+    flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
+    fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+    return proc, master_fd
+
+
+def _flatten_boot_prompt(text: str) -> bytes:
+    """Collapse multi-line boot prompt to a single line.
+
+    CC's TUI treats multi-line input as fragile (depends on Shift+Enter
+    handling). The boot text is bullet-style, so collapsing newlines to
+    spaces keeps it readable. The trailing submit (CR) is sent separately
+    by the caller after a small delay -- if text and CR arrive in the same
+    write, Ink-based TUIs (like CC's) treat the whole thing as a paste and
+    do NOT fire an Enter key event.
+    """
+    flat = " ".join(line.strip() for line in text.splitlines() if line.strip())
+    return flat.encode("utf-8", "replace")
 
 
 def wait_for_exit_or_handoff(
     proc: subprocess.Popen,
+    master_fd: int,
     session_id: str,
+    boot_prompt: str,
     ctx_limit_pct: int,
     hard_kill_pct: int,
     poll_interval: float = 2.0,
     grace_period: float = 60.0,
+    boot_max_wait: float = 8.0,
+    fast_exit_secs: float = 10.0,
 ) -> str:
-    """Wait for CC to exit, agent handoff, or forced ctx limit.
+    """Bridge stdio to CC's pty and supervise the session.
 
-    Returns reason: 'exit', 'handoff', 'forced', or 'hard_kill'.
+    Auto-injects boot_prompt onto the master fd once ctx.json shows up
+    (CC's TUI is ready), or after boot_max_wait seconds elapse with no
+    ctx.json (fallback so misconfig does not silently swallow the boot).
+
+    Returns: 'exit', 'handoff', 'forced', 'hard_kill', or 'fast_exit'.
+    'fast_exit' = CC died quickly with rc=0 and never wrote ctx.json
+    (likely launched in --print/sdk-cli mode by mistake).
     """
+    stdin_fd = sys.stdin.fileno() if sys.stdin.isatty() else None
+    old_attrs = None
+    if stdin_fd is not None:
+        try:
+            old_attrs = termios.tcgetattr(stdin_fd)
+            tty.setraw(stdin_fd)
+        except (termios.error, OSError):
+            old_attrs = None
+
+    def _on_winch(signum, frame):
+        if stdin_fd is not None:
+            _copy_winsize(stdin_fd, master_fd)
+
+    prev_winch = signal.signal(signal.SIGWINCH, _on_winch)
+
+    ctx_path = CLAUDE_DIR / "sessions" / session_id / "ctx.json"
+    boot_sent = not bool(boot_prompt)
+    boot_submit_at: float | None = None  # when to send the trailing CR
+    submit_delay = 0.5
+    ever_saw_ctx = False
     urgent_since: float | None = None
+    start = time.time()
+    last_ctx_poll = 0.0
 
-    while True:
-        rc = proc.poll()
-        if rc is not None:
-            log(f"Claude exited (rc={rc})")
-            return "exit"
+    try:
+        while True:
+            rc = proc.poll()
+            if rc is not None:
+                # drain whatever output remains on master_fd
+                while True:
+                    try:
+                        data = os.read(master_fd, 4096)
+                    except OSError:
+                        break
+                    if not data:
+                        break
+                    try:
+                        os.write(sys.stdout.fileno(), data)
+                    except OSError:
+                        break
+                elapsed = time.time() - start
+                log(f"Claude exited (rc={rc}, elapsed={elapsed:.1f}s)")
+                if (rc == 0 and elapsed < fast_exit_secs and not ever_saw_ctx):
+                    return "fast_exit"
+                return "exit"
 
-        if HANDOFF_MARKER.exists():
-            log("Handoff signal from agent")
-            return "handoff"
+            if HANDOFF_MARKER.exists():
+                log("Handoff signal from agent")
+                return "handoff"
 
-        pct = get_ctx_pct(session_id)
-        if pct is not None:
-            if pct >= hard_kill_pct:
-                log(f"Context at {pct}% >= {hard_kill_pct}% -- HARD KILL")
-                return "hard_kill"
+            read_fds = [master_fd]
+            if stdin_fd is not None:
+                read_fds.append(stdin_fd)
+            try:
+                r, _, _ = select.select(read_fds, [], [], 0.1)
+            except (OSError, select.error) as e:
+                if getattr(e, "errno", None) == errno.EINTR:
+                    continue
+                r = []
 
-            if pct >= ctx_limit_pct:
-                if urgent_since is None:
-                    urgent_since = time.time()
-                    log(f"Context at {pct}% >= {ctx_limit_pct}% -- "
-                        f"hook will inject URGENT, grace period {grace_period}s")
-                elif time.time() - urgent_since > grace_period:
-                    log(f"Grace period expired ({grace_period}s), forcing handoff")
-                    return "forced"
-            else:
-                urgent_since = None
+            if master_fd in r:
+                try:
+                    data = os.read(master_fd, 4096)
+                    if data:
+                        os.write(sys.stdout.fileno(), data)
+                except OSError:
+                    pass
 
-        time.sleep(poll_interval)
+            if stdin_fd is not None and stdin_fd in r:
+                try:
+                    data = os.read(stdin_fd, 4096)
+                    if data:
+                        os.write(master_fd, data)
+                except OSError:
+                    pass
+
+            now = time.time()
+            if now - last_ctx_poll < poll_interval:
+                continue
+            last_ctx_poll = now
+
+            if not ever_saw_ctx and ctx_path.exists():
+                ever_saw_ctx = True
+
+            if not boot_sent:
+                if ever_saw_ctx:
+                    log("CC interactive UI ready -- injecting boot prompt")
+                    boot_sent = True
+                elif (now - start) >= boot_max_wait:
+                    log(f"ctx.json not seen after {boot_max_wait:.0f}s -- "
+                        f"injecting boot prompt anyway")
+                    boot_sent = True
+                if boot_sent:
+                    try:
+                        os.write(master_fd, _flatten_boot_prompt(boot_prompt))
+                        # Schedule the Enter as a separate write so Ink
+                        # treats it as a key event instead of part of a paste.
+                        boot_submit_at = now + submit_delay
+                    except OSError as e:
+                        log(f"WARN: failed to inject boot prompt: {e}")
+                        boot_submit_at = None
+
+            if boot_submit_at is not None and now >= boot_submit_at:
+                try:
+                    os.write(master_fd, b"\r")
+                    log("Boot prompt submitted")
+                except OSError as e:
+                    log(f"WARN: failed to submit boot prompt: {e}")
+                boot_submit_at = None
+
+            pct = get_ctx_pct(session_id)
+            if pct is not None:
+                if pct >= hard_kill_pct:
+                    log(f"Context at {pct}% >= {hard_kill_pct}% -- HARD KILL")
+                    return "hard_kill"
+                if pct >= ctx_limit_pct:
+                    if urgent_since is None:
+                        urgent_since = now
+                        log(f"Context at {pct}% >= {ctx_limit_pct}% -- "
+                            f"hook will inject URGENT, grace period "
+                            f"{grace_period}s")
+                    elif now - urgent_since > grace_period:
+                        log(f"Grace period expired ({grace_period}s), "
+                            f"forcing handoff")
+                        return "forced"
+                else:
+                    urgent_since = None
+    finally:
+        try:
+            signal.signal(signal.SIGWINCH, prev_winch)
+        except (ValueError, OSError):
+            pass
+        if stdin_fd is not None and old_attrs is not None:
+            try:
+                termios.tcsetattr(stdin_fd, termios.TCSADRAIN, old_attrs)
+            except (termios.error, OSError):
+                pass
+        try:
+            os.close(master_fd)
+        except OSError:
+            pass
 
 
 def kill_claude(proc: subprocess.Popen):
@@ -254,10 +434,10 @@ def main(argv=None):
         log(f"--- SESSION #{session_num} ({session_id[:8]}) ---")
 
         boot = build_boot_prompt(session_num, prev_session_id, args.prompt)
-        proc = launch_claude(boot, session_id)
+        proc, master_fd = launch_claude(session_id)
 
         reason = wait_for_exit_or_handoff(
-            proc, session_id,
+            proc, master_fd, session_id, boot,
             args.ctx_limit, args.hard_kill,
             args.poll_interval, args.grace,
         )
@@ -267,6 +447,16 @@ def main(argv=None):
 
         record_session(session_id, session_num, reason)
         prev_session_id = session_id
+
+        if reason == "fast_exit":
+            sys.stderr.write(
+                "\r\nERROR: CC exited immediately with rc=0 and never wrote "
+                "ctx.json. This usually means we accidentally launched in "
+                "--print/sdk-cli mode (positional prompt argument). "
+                "Aborting outer loop.\r\n"
+            )
+            log("Fast-exit detected. Aborting outer loop.")
+            return 2
 
         if reason == "exit":
             log("User exited. Stopping outer loop.")
@@ -279,6 +469,7 @@ def main(argv=None):
         time.sleep(3)
 
     log("wormlens outer loop stopped")
+    return 0
 
 
 if __name__ == "__main__":

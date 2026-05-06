@@ -92,12 +92,85 @@ def _strip_embedded_extracts(text: str) -> str:
 
 
 def _is_display_msg(msg: ChatMessage) -> bool:
-    """True for messages that appear in md/txt output."""
-    return (
-        (msg.msg_type == "msg" and msg.role in ("user", "assistant"))
-        or msg.msg_type == "team_msg"
-        or msg.msg_type == "compact"
-    )
+    """True for messages that appear in chat/md/txt output.
+
+    The pipeline already filters by FilterOpts before reaching the
+    formatter, so this layer accepts every message that survived
+    filtering. Each formatter is responsible for picking an
+    appropriate rendering for the message's msg_type.
+    """
+    return True
+
+
+# msg_type -> (label used in md/chat including-list, ordering rank)
+_LABEL_FOR_MSG_TYPE = {
+    "team_msg": "team",
+    "thinking": "thinking",
+    "tool_use": "tools",
+    "tool_result": "tools",
+    "hook": "hooks",
+    "bash": "bash",
+    "code_edit": "code_edits",
+    "ref": "refs",
+    "system_inject": "system_msgs",
+    "compact": "compact",
+}
+
+_LABEL_ORDER = [
+    "user", "assistant", "team", "thinking", "tools", "hooks",
+    "bash", "code_edits", "refs", "system_msgs", "compact",
+]
+
+
+def _present_label(msg: ChatMessage) -> str | None:
+    """Return the inclusion-list label for a rendered message."""
+    if msg.msg_type == "msg":
+        if msg.role in ("user", "assistant"):
+            return msg.role
+        return None
+    return _LABEL_FOR_MSG_TYPE.get(msg.msg_type)
+
+
+def _collect_present_labels(sessions: list[ChatSession]) -> list[str]:
+    """Labels for content actually present in the rendered body."""
+    seen: set[str] = set()
+    for s in sessions:
+        for m in s.messages:
+            lbl = _present_label(m)
+            if lbl:
+                seen.add(lbl)
+    return [lbl for lbl in _LABEL_ORDER if lbl in seen]
+
+
+# msg_type -> (chat tag name, md subheader label, txt marker label)
+_SPECIAL_RENDER = {
+    "thinking":      ("thinking",      "Thinking",       "THINKING"),
+    "tool_use":      ("tool_use",      "Tool Use",       "TOOL_USE"),
+    "tool_result":   ("tool_result",   "Tool Result",    "TOOL_RESULT"),
+    "bash":          ("bash_output",   "Bash Output",    "BASH_OUTPUT"),
+    "hook":          ("hook",          "Hook",           "HOOK"),
+    "system_inject": ("system_inject", "System Inject",  "SYSTEM_INJECT"),
+    "code_edit":     ("code_edit",     "Code Edit",      "CODE_EDIT"),
+    "ref":           ("ref",           "Ref",            "REF"),
+}
+
+
+def _chat_tag_for(msg: ChatMessage) -> tuple[str, str]:
+    """Return (tag_name, attr_string) for a chat-format opening tag."""
+    t = msg.msg_type
+    if t == "msg":
+        return msg.role, ""
+    spec = _SPECIAL_RENDER.get(t)
+    if spec:
+        tag = spec[0]
+        attrs = ""
+        if t == "tool_use":
+            name = msg.metadata.get("tool", "") if msg.metadata else ""
+            if name:
+                attrs = f' name="{name}"'
+        return tag, attrs
+    # team_msg, compact, anything else -- preserve legacy "role/type" form
+    return f"{msg.role}/{t}", ""
 
 
 # -- Markdown format ---------------------------------------------------------
@@ -119,13 +192,19 @@ def format_md(
     recall: agent recall mode -- strip frontmatter, add instruction caveat.
     """
     now = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
-    including = ", ".join(include_types or ["user", "assistant"])
+
+    # `including` reflects the categories that actually appear in the body,
+    # not whatever flags the caller asked for. Falls back to a generic
+    # "messages only" string when nothing was rendered.
+    present = _collect_present_labels(sessions)
+    including = ", ".join(present) if present else "messages only"
 
     session_count = sum(
         1 for s in sessions if any(_is_display_msg(m) for m in s.messages)
     )
     total_turns = sum(
-        sum(1 for m in s.messages if _is_display_msg(m) and m.role == "user")
+        sum(1 for m in s.messages
+            if m.msg_type == "msg" and m.role == "user")
         for s in sessions
     )
 
@@ -175,7 +254,7 @@ def format_md(
 
         turn_num = 0
         for msg in display_msgs:
-            if msg.role == "user":
+            if msg.msg_type == "msg" and msg.role == "user":
                 turn_num += 1
                 body_lines.append(f"### Turn {turn_num}")
                 body_lines.append("")
@@ -186,6 +265,21 @@ def format_md(
 
             if msg.msg_type == "compact":
                 body_lines.append(f"*{text}*")
+            elif msg.msg_type in _SPECIAL_RENDER:
+                spec = _SPECIAL_RENDER[msg.msg_type]
+                heading = f"#### {spec[1]} [turn {turn_num}]"
+                if msg.msg_type == "tool_use":
+                    name = msg.metadata.get("tool", "") if msg.metadata else ""
+                    if name:
+                        heading = f"#### {spec[1]} [turn {turn_num}]: {name}"
+                body_lines.append(heading)
+                body_lines.append("")
+                if text:
+                    if len(text) > 30000:
+                        text = text[:30000] + "\n\n*[response truncated -- exceeded 30KB]*"
+                    body_lines.append(text)
+                else:
+                    body_lines.append("*[empty]*")
             else:
                 body_lines.append(f"**{_msg_label(msg)}:**")
                 body_lines.append("")
@@ -295,7 +389,8 @@ def format_chat(
         1 for s in sessions if any(_is_display_msg(m) for m in s.messages)
     )
     total_turns = sum(
-        sum(1 for m in s.messages if _is_display_msg(m) and m.role == "user")
+        sum(1 for m in s.messages
+            if m.msg_type == "msg" and m.role == "user")
         for s in sessions
     )
 
@@ -315,7 +410,12 @@ def format_chat(
             continue
 
         sid = session.session_id
-        src = session.source_type or "unknown"
+        # For round-trip stability of wl-sourced sessions, prefer the
+        # original source type captured at parse time (wl_extract stores
+        # this in metadata["original_source"]). Same for source_file when
+        # carried through metadata["original_source_file"].
+        meta = session.metadata or {}
+        src = meta.get("original_source") or session.source_type or "unknown"
         date = (session.start_ts[:10] if session.start_ts else "")
         title = session.title or ""
         title_attr = f' title="{title}"' if title and title != f"Session {sid[:8]}" else ""
@@ -323,14 +423,15 @@ def format_chat(
         body_lines.append(f'<session id="{sid}" source="{src}" date="{date}"{title_attr}>')
 
         uses_line_index = (src == "cc")
+        comment_path = meta.get("original_source_file") or session.source_file
         if uses_line_index:
-            body_lines.append(f"<!-- turn = JSONL line number. {session.source_file} -->")
+            body_lines.append(f"<!-- turn = JSONL line number. {comment_path} -->")
         else:
-            body_lines.append(f"<!-- turn = sequential. {session.source_file} -->")
+            body_lines.append(f"<!-- turn = sequential. {comment_path} -->")
 
         seq_turn = 0
         for msg in display_msgs:
-            role = msg.role if msg.msg_type == "msg" else f"{msg.role}/{msg.msg_type}"
+            tag_name, attrs = _chat_tag_for(msg)
 
             if msg.role == "user" and msg.msg_type == "msg":
                 seq_turn += 1
@@ -348,7 +449,7 @@ def format_chat(
                 text = text[:30000] + "\n[truncated -- exceeded 30KB]"
 
             escaped = _escape_chat_content(text) if text else ""
-            body_lines.append(f"<{role} turn={turn_num}>{escaped}")
+            body_lines.append(f"<{tag_name} turn={turn_num}{attrs}>{escaped}")
 
         body_lines.append("</session>")
 
@@ -418,8 +519,21 @@ def format_txt(sessions: list[ChatSession], recall: bool = False) -> str:
         lines.append(f"[START_DATE] {session.start_ts}")
         lines.append(f"[END_DATE] {session.end_ts}")
 
+        seq_turn = 0
         for msg in display_msgs:
-            lines.append(f"[{_msg_label(msg)}] {_strip_embedded_extracts(msg.text)}")
+            if msg.msg_type == "msg" and msg.role == "user":
+                seq_turn += 1
+            text = _strip_embedded_extracts(msg.text)
+            if msg.msg_type in _SPECIAL_RENDER:
+                spec = _SPECIAL_RENDER[msg.msg_type]
+                attr = ""
+                if msg.msg_type == "tool_use":
+                    name = msg.metadata.get("tool", "") if msg.metadata else ""
+                    if name:
+                        attr = f" name={name}"
+                lines.append(f"[{spec[2]} turn={seq_turn}{attr}] {text}")
+            else:
+                lines.append(f"[{_msg_label(msg)}] {text}")
 
     body = "\n".join(lines)
     tag = "wl-recall-caveat" if recall else 'wormlens-extract format="txt"'
@@ -533,20 +647,23 @@ def write_output(
 # applied only to vscode_copilot source messages.
 
 
+# Keys are written as \xNN escapes so this source file stays pure ASCII.
+# Each key matches the same runtime string the original literal produced --
+# i.e. UTF-8 source bytes decoded as UTF-8 yielding 1 codepoint per \x escape.
 _MOJIBAKE = {
-    "â": "--",
-    "â": "--",
-    "â": "'",
-    "â": '"',
-    "â": '"',
-    "â¦": "...",
-    "â": "'",
-    "Ã": "x",
-    "â": "->",
-    "â": "^",
-    "â": "v",
-    "â¥": ">=",
-    "Î±": "alpha",
+    "\xe2\x80\x94": "--",
+    "\xe2\x80\x93": "--",
+    "\xe2\x80\x99": "'",
+    "\xe2\x80\x9c": '"',
+    "\xe2\x80\x9d": '"',
+    "\xe2\x80\xa6": "...",
+    "\xe2\x80\x98": "'",
+    "\xc3\x97": "x",
+    "\xe2\x86\x92": "->",
+    "\xe2\x86\x91": "^",
+    "\xe2\x86\x93": "v",
+    "\xe2\x89\xa5": ">=",
+    "\xce\xb1": "alpha",
 }
 
 

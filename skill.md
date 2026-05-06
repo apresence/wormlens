@@ -19,19 +19,23 @@ python .copilot/wormlens.pyz [INPUT...] [options]  # zipapp
 ## Quick Reference
 
 ```bash
-wl                          # latest CC session, recovery mode (since last compact)
-wl --full                   # full session (ignore compacts)
-wl -t 20                    # last 20 messages
-wl --source vscode          # latest VS Code Copilot session
-wl --list-sessions          # list available sessions
-wl --session <UUID>         # extract specific session
-wl --recall --session <UUID> # recover prior session into context (agent use)
-wl --grep "pattern"         # search all sessions
-wl --grep "pattern" -i -B2 -A2  # case-insensitive with context
-wl --index 5-10             # extract specific turns
-wl --summary-stats          # session statistics
-wl --doctor                 # diagnose environment issues
+wl --list-sessions             # list available sessions (start here)
+wl --recall --session <UUID>   # recover prior session into context (agent use)
+wl --session <UUID>            # extract specific session
+wl --full --session <UUID>     # full session (ignore compact boundaries)
+wl -t 20 --session <UUID>      # last 20 messages of a session
+wl --source vscode --list-sessions   # list VS Code Copilot sessions
+wl --grep "pattern"            # search all sessions
+wl --grep "pattern" -i -B2 -A2 # case-insensitive with context
+wl --index 5-10 --session <UUID>     # extract specific turns
+wl --summary-stats             # session statistics
+wl --doctor                    # diagnose environment issues
 ```
+
+Always pass `--session <UUID>` for deterministic extraction. Bare `wl` (no
+args) attempts recovery-mode auto-select from the project's CC session
+directory and only succeeds when CWD maps to a project with CC sessions on
+disk; not reliable in scripted contexts.
 
 ## Key Flags
 
