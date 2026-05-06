@@ -26,6 +26,7 @@ _SYSTEM_TAG_RES = [
     re.compile(r'<available-deferred-tools>.*?</available-deferred-tools>', re.DOTALL),
     re.compile(r'<fast_mode_info>.*?</fast_mode_info>', re.DOTALL),
     re.compile(r'<wormlens-boot>.*?</wormlens-boot>', re.DOTALL),
+    re.compile(r'<task-notification>.*?</task-notification>', re.DOTALL),
 ]
 
 # Tags that indicate a user record is actually a system-injected message
