@@ -524,14 +524,21 @@ _HOOK_MARKER = "wormlens/wl-hook.py"  # substring used to identify our entries
 _HOOK_EVENTS = ("UserPromptSubmit", "PreToolUse")
 
 
-def _get_skill_source() -> Path:
-    """Return path to the canonical SKILL.md bundled with the package."""
-    return Path(__file__).parent / "skill.md"
+def _get_skill_source():
+    """Return a Traversable for the canonical SKILL.md bundled with the package.
+
+    importlib.resources works for regular installs, editable installs, and
+    zipapps -- Path(__file__).parent fails inside a zipapp because the
+    'directory' is virtual.
+    """
+    from importlib.resources import files
+    return files("wormlens") / "skill.md"
 
 
-def _get_hook_source() -> Path:
-    """Return path to the canonical wl-hook.py bundled with the package."""
-    return Path(__file__).parent / "harness" / "wl-hook.py"
+def _get_hook_source():
+    """Return a Traversable for the canonical wl-hook.py bundled with the package."""
+    from importlib.resources import files
+    return files("wormlens") / "harness" / "wl-hook.py"
 
 
 def _find_repo_root(start: Path | None = None) -> Path | None:
