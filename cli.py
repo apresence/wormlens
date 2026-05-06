@@ -1192,12 +1192,24 @@ def _main():
         return
 
     if args.grep:
-        # grep mode: search all message types, all sessions, all sources
+        # grep mode: filter scope mirrors the rest of wormlens. By default
+        # only user + assistant text is searched; pass --tools / --thinking
+        # / --bash / --all to broaden. Default keeps grep output uncluttered
+        # by tool_use / tool_result / hook / system_inject matches the user
+        # almost never wants.
         grep_opts = FilterOpts(
-            thinking=True, tools=True, hooks=True, bash=True,
-            code_edits=True, refs=True, teammates=True, system_msgs=True,
-            compact_markers=True, strip_tags=not args.no_strip_tags,
-            parse_commands=not args.no_parse_commands, skip_empty=True,
+            thinking=args.thinking,
+            tools=args.tools,
+            hooks=args.hooks,
+            bash=args.bash,
+            code_edits=args.code_edits,
+            refs=args.refs,
+            teammates=args.teammates,
+            system_msgs=args.system_msgs,
+            compact_markers=args.compact_markers,
+            strip_tags=not args.no_strip_tags,
+            parse_commands=not args.no_parse_commands,
+            skip_empty=True,
         )
         # Determine which sources to search
         if args.source != "auto":

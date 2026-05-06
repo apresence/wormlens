@@ -70,6 +70,15 @@ Initial public release.
   `<wormlens-boot>`, `<task-notification>`) so recall does not
   feed an agent its own out-of-band noise.
 
+### Changed
+
+- `--grep` default scope now mirrors normal extraction: user and
+  assistant text only. Previously grep searched every record type
+  unconditionally, surfacing `[assistant/tool_use]` and
+  `[system/tool_result]` matches the user almost never wanted. Use
+  `--tools`, `--thinking`, `--bash`, `--hooks`, `--system-msgs`, or
+  `--all` to opt back into broader search, same as for extracts.
+
 ### Notes
 
 - Stdlib only. No third-party runtime dependencies.
