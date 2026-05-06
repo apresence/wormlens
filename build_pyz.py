@@ -24,7 +24,13 @@ def main():
         pkg_dest = tmp / "wormlens"
         shutil.copytree(
             PACKAGE_DIR, pkg_dest,
-            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "build_pyz.py"),
+            ignore=shutil.ignore_patterns(
+                "__pycache__", "*.pyc", "build_pyz.py",
+                ".git", ".github", ".gitignore",
+                ".local", ".copilot", ".pytest_cache",
+                "build", "dist", "*.egg-info",
+                "*.pyz",
+            ),
         )
 
         entry = tmp / "__main__.py"
