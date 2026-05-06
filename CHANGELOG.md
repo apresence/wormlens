@@ -70,6 +70,15 @@ Initial public release.
   `<wormlens-boot>`, `<task-notification>`) so recall does not
   feed an agent its own out-of-band noise.
 
+### Added (continued)
+
+- `--no-color` flag suppresses ANSI escapes and unicode decoration
+  in `--doctor` and `--grep` output. Also honors the de-facto
+  `NO_COLOR` environment variable (https://no-color.org). The
+  existing isatty() autodetect still applies; the new flag/env are
+  for cases where stdout IS a TTY but the user wants plain ASCII
+  (capture, clipboard, screenshots, CI logs).
+
 ### Changed
 
 - `--grep` default scope now mirrors normal extraction: user and

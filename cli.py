@@ -113,6 +113,10 @@ Examples:
     output.add_argument("--summary", action=argparse.BooleanOptionalAction,
                         default=None,
                         help="Include summary in frontmatter (default: auto = compact summary if present)")
+    output.add_argument("--no-color", action="store_true",
+                        help="Disable ANSI color codes and unicode decoration "
+                             "in --doctor and --grep output. Honored automatically "
+                             "when stdout is not a TTY or NO_COLOR env var is set.")
 
     filt = p.add_argument_group("filtering")
     filt.add_argument("--thinking", action="store_true",
@@ -408,9 +412,22 @@ def _filter_session_rows(
 # -- Doctor diagnostics -------------------------------------------------------
 
 
-def _run_doctor():
+def _should_color(no_color_flag: bool = False) -> bool:
+    """Decide whether to emit ANSI color and unicode decoration.
+
+    False if --no-color was passed, NO_COLOR env var is set (per
+    https://no-color.org), or stdout is not a TTY.
+    """
+    if no_color_flag:
+        return False
+    if os.environ.get("NO_COLOR"):
+        return False
+    return sys.stdout.isatty()
+
+
+def _run_doctor(no_color: bool = False):
     """Run diagnostics and print a summary of environment health."""
-    use_color = sys.stdout.isatty()
+    use_color = _should_color(no_color)
 
     def ok(msg: str) -> str:
         if use_color:
@@ -847,7 +864,7 @@ def _uninstall_skill(target_dir: str | None):
 
 
 def _grep_sessions(sessions: list, pattern: str, ignore_case: bool = False,
-                   before: int = 0, after: int = 0) -> int:
+                   before: int = 0, after: int = 0, no_color: bool = False) -> int:
     """Search extracted sessions for a regex pattern. Returns match count."""
     flags = re.IGNORECASE if ignore_case else 0
     try:
@@ -856,8 +873,9 @@ def _grep_sessions(sessions: list, pattern: str, ignore_case: bool = False,
         print(f"Error: invalid regex: {e}", file=sys.stderr)
         sys.exit(1)
 
-    use_color = sys.stdout.isatty()
-    # Box-drawing chars fail on Windows cp1252 when piped
+    use_color = _should_color(no_color)
+    # Box-drawing chars fail on Windows cp1252 when piped, and the no-color
+    # path is also a clean-ASCII path for capture/clipboard/CI logs.
     sep = "\u2500\u2500" if use_color else "--"
 
     def c(code: str, text: str) -> str:
@@ -1085,7 +1103,7 @@ def _main():
         _uninstall_skill(args.skill_target)
         return
     if args.doctor:
-        _run_doctor()
+        _run_doctor(no_color=args.no_color)
         return
     if args.handoff:
         if not args.session:
@@ -1233,6 +1251,7 @@ def _main():
             all_sessions, args.grep,
             ignore_case=args.ignore_case,
             before=args.before, after=args.after,
+            no_color=args.no_color,
         )
         # Per CHECKPOINT 2026-05-04: empty grep returns exit 1, hits exit 0.
         # The --grep + --list-sessions branch already enforces this; this
