@@ -6,6 +6,7 @@ dist/
 build/
 .wormlens/
 .local/
+.claude/
 *.tar.gz
 chatlog/
 .copilot/

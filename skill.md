@@ -32,10 +32,10 @@ wl --summary-stats             # session statistics
 wl --doctor                    # diagnose environment issues
 ```
 
-Always pass `--session <UUID>` for deterministic extraction. Bare `wl` (no
-args) attempts recovery-mode auto-select from the project's CC session
-directory and only succeeds when CWD maps to a project with CC sessions on
-disk; not reliable in scripted contexts.
+Always pass `--session <UUID>` for deterministic extraction. Bare `wl`
+(no args) prints help -- it does not extract anything. Use
+`wl --list-sessions` to find a UUID first, then `wl --recall --session
+<UUID>` for the common "give me my prior session" recovery path.
 
 ## Key Flags
 

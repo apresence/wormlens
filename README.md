@@ -192,7 +192,7 @@ wormlens/                  (project root = python package)
   pyproject.toml
   README.md
   LICENSE
-  CLAUDE.md
+  AGENTS.md                # Instructions for AI agents working in this repo
   CHANGELOG.md
   tests/                   # pytest suite (see "Running tests")
   harness/

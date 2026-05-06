@@ -64,6 +64,11 @@ Initial public release.
 - `--doctor`: environment and configuration sanity check.
 - `--list-sessions` table includes a source column (S) and start
   timestamp (UTC).
+- Anti-ouroboros strip set covers Claude Code synthetic blocks
+  (`<system-reminder>`, `<local-command-caveat>`,
+  `<available-deferred-tools>`, `<fast_mode_info>`,
+  `<wormlens-boot>`, `<task-notification>`) so recall does not
+  feed an agent its own out-of-band noise.
 
 ### Notes
 
