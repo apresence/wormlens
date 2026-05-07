@@ -3,10 +3,10 @@
 **Kill pancake brain.** Episodic memory handoff between agent sessions -- no
 compact required.
 
-Pluggable chat history extraction for Claude Code and VS Code Copilot. Reads
-raw session logs and produces token-efficient, addressable extracts that
-agents can consume as context -- no more lossy compacts, no more 5-minute
-waits, no more drilling the wrong wall.
+Pluggable chat history extraction for Claude Code, OpenAI Codex CLI, and
+VS Code Copilot. Reads raw session logs and produces token-efficient,
+addressable extracts that agents can consume as context -- no more lossy
+compacts, no more 5-minute waits, no more drilling the wrong wall.
 
 > Has this ever happened to you? You're happily coding with your companion
 > agent, lining 'em up and knocking 'em down. Then -- BAM! Blindsided by
@@ -32,7 +32,7 @@ session, hand it to the next one, keep going.
   `context_used_pct` and `time` into every turn (~10 tokens) so the
   agent has the telemetry to make those calls.
 - **Unified** -- list, grep, search, summarize across providers (Claude
-  Code, VS Code Copilot now; pluggable for others).
+  Code, OpenAI Codex CLI, VS Code Copilot; pluggable for others).
 
 ## Why it's cheap
 
@@ -50,27 +50,34 @@ overall.
 Compact also reserves a chunk of the context window for the summary
 itself, leaving the active agent fewer tokens to actually work with.
 
-Hypothetical (200K Opus window): a wormlens recall might land at ~6%
-used; a compact's summary residue at ~20%, plus another ~25% reserved
-for the next auto-compact, leaves ~45% committed before any work.
-**Working room: ~94% (wormlens) vs ~55% (compact).**\*
+Measured on our own JSONLs (200K Opus window, n=49 compacts in 24
+sessions): a wormlens recall lands at ~6% of window; the median
+compact summary residue is **5.9% of window** (3.9% on the
+direct-postTokens subset), and CC fires auto-compact at **83.6% of
+window** (median, p25=83.5%, p75=84.1%). So a compacted session is
+sitting on ~6% summary + ~16% waste-zone reserve = **~22%
+committed** before any work. Wormlens has no waste-zone reserve, so
+post-recall sessions sit at ~6%. **Working room: ~94% (wormlens) vs
+~78% (compact).**
 
 There are five cost layers (inference, prefill, degradation laundering,
 waste tokens in the danger zone, and developer flow state). Wormlens
 wins all five. The flow-state layer alone might run ~60x cheaper -- a
 senior developer at $100/hour costs roughly $100/session in compact-
-induced block + recovery vs ~$1.67/session of clean handoff (also
-hypothetical until benchmarked).
+induced block + recovery vs ~$1.67/session of clean handoff (still
+hypothetical -- the flow-state layer can't be measured from JSONL).
 
 See [docs/token-economics.md](docs/token-economics.md) for the
-five-layer accounting with current Anthropic pricing, and
+five-layer accounting with measured numbers and current Anthropic
+pricing, [docs/measurements.md](docs/measurements.md) for the full
+distribution tables and methodology, and
 [docs/agent-agency.md](docs/agent-agency.md) for the design philosophy.
 
-\* These percentages and dollar figures are illustrative, not
-measured. They give a reader a magnitude estimate while we do the
-honest work: a `wl --analyze-compacts` mode is on the punch list to
-walk our own session JSONLs and produce real numbers from observed
-compacts. Real data will replace the hypotheticals.
+The token-cost layers above are measured (n=49 compacts, median;
+range p25-p75). The flow-state layer ($100/session vs $1.67/session)
+remains illustrative -- it requires logging real handoff durations,
+recovery times, and block durations across a sample of users, which
+isn't extractable from JSONL alone.
 
 ## Installation
 
@@ -99,11 +106,13 @@ python wormlens.pyz [INPUT...] [options]
 ```bash
 wl --list-sessions                   # list CC sessions (start here)
 wl --list-sessions --source vscode   # list VS Code sessions
+wl --list-sessions --source codex    # list Codex CLI sessions
 wl --recall --session <UUID>         # extract one session for agent recall
 wl --session <UUID>                  # extract specific CC session
 wl --session abc-123,def-456         # extract multiple sessions
 wl session.jsonl                     # extract from explicit file (auto-detect source)
 wl --source vscode --session <UUID>  # explicit VS Code session
+wl --source codex --session <UUID>   # explicit Codex session
 wl --full --session <UUID>           # full session (ignore compact boundaries)
 wl -t 20 --session <UUID>            # last 20 messages of a session
 wl --index 5-10 --session <UUID>     # extract turns 5 through 10
@@ -122,6 +131,7 @@ Bare `wl` (no args) prints help. For extraction, always pass `--session
 | Source | Flag | S | Auto-detect | Session Location |
 |--------|------|---|-------------|------------------|
 | Claude Code | `--source cc` | C | `type` + `sessionId` + `timestamp` keys | `$CLAUDE_CONFIG_DIR/projects/**/*.jsonl` |
+| OpenAI Codex CLI | `--source codex` | X | first record `type=session_meta` with `id` + `cli_version` | `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl` (default `~/.codex/`) |
 | VS Code Copilot | `--source vscode` | V | `kind` + `v` keys | `%APPDATA%/Code/User/workspaceStorage/*/chatSessions/*.jsonl` |
 | WormLens extract | `--source wl` | W | `<wormlens-extract>` or `<wl-recall-caveat>` wrapper | File input only (no discovery) |
 
@@ -166,7 +176,7 @@ The default. Designed for LLM context injection -- maximum signal, minimum chrom
 </session>
 ```
 
-**Turn numbering:** CC uses JSONL line numbers (turn=80 -> line 80 of source file for full-fidelity retrieval). VS Code uses sequential numbers.
+**Turn numbering:** CC uses JSONL line numbers (turn=80 -> line 80 of source file for full-fidelity retrieval). VS Code and Codex use sequential numbers.
 
 **Escaping:** Only at start-of-line -- `\` -> `\\`, `<` -> `\<`. Mid-line `<` is untouched.
 
@@ -265,6 +275,7 @@ wormlens/                  (project root = python package)
     __init__.py            # Auto-discovery registry
     _base.py               # Provider ABC
     claude_code/parser.py
+    codex/parser.py
     vscode_copilot/parser.py
     wl_extract/parser.py
 ```

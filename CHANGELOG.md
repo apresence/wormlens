@@ -4,6 +4,35 @@ All notable changes to wormlens are documented in this file. The format
 is loosely based on Keep a Changelog, and the project adheres to
 Semantic Versioning.
 
+## [Unreleased]
+
+### Added
+
+- **OpenAI Codex CLI provider** (`--source codex`, source label `X`).
+  Reads rollout JSONL files from `$CODEX_HOME/sessions/YYYY/MM/DD/`
+  (default `~/.codex/`). Auto-detects via the first record's
+  `type=session_meta` plus `id` and `cli_version` fields. Handles all
+  canonical `response_item` content (message, reasoning,
+  function_call, function_call_output, web_search_call, custom tool
+  calls), the `compacted` summary record (with `since_last_compact`
+  recall slicing analogous to CC's compact_boundary), and the
+  in-place append behavior of `codex exec resume --last`. MCP tool
+  calls surface with `namespace` metadata so consumers can identify
+  the originating server. Synthetic role=developer permissions and
+  role=user `<environment_context>` injections are filtered by
+  default; surface them with `--system-msgs`.
+- Codex CLI added to README providers table, quick-start examples,
+  and source-character registry (`X`).
+
+### Documentation
+
+- Compact behavior measured (n=49 compacts in 24 sessions, deduped,
+  CC 2.1.49--2.1.128, opus-4-6/4-7 + sonnet-4-6). Median
+  ctx-at-trigger 83.6%, median post-compact residue 5.9% of 200K
+  window (3.9% direct-postTokens subset), median Opus gen cost $0.34.
+  Replaces hypotheticals in README and `docs/token-economics.md`;
+  adds `docs/measurements.md` with full distributions and methodology.
+
 ## [0.1.0] - 2026-05-06
 
 Initial public release.

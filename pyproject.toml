@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wormlens"
-version = "0.1.0"
-description = "Lossless episodic memory for Claude Code and VS Code Copilot"
+version = "0.2.0"
+description = "Lossless episodic memory for Claude Code, OpenAI Codex CLI, and VS Code Copilot"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.9"
@@ -42,6 +42,7 @@ Repository = "https://github.com/apresence/wormlens"
 "wormlens" = "."
 "wormlens.providers" = "providers"
 "wormlens.providers.claude_code" = "providers/claude_code"
+"wormlens.providers.codex" = "providers/codex"
 "wormlens.providers.vscode_copilot" = "providers/vscode_copilot"
 "wormlens.providers.wl_extract" = "providers/wl_extract"
 "wormlens.harness" = "harness"
@@ -51,6 +52,7 @@ packages = [
     "wormlens",
     "wormlens.providers",
     "wormlens.providers.claude_code",
+    "wormlens.providers.codex",
     "wormlens.providers.vscode_copilot",
     "wormlens.providers.wl_extract",
     "wormlens.harness",

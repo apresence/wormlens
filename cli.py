@@ -39,7 +39,7 @@ Examples:
   wl --full                            # full CC session (ignore compacts)
   wl --source vscode                   # latest VS Code Copilot session
   wl session.jsonl                     # auto-detect source from file
-  wl --list-sessions                   # list all sessions (S column: C/V/W)
+  wl --list-sessions                   # list all sessions (S column: C/V/W/X)
   wl --list-sessions --source vscode   # list VS Code sessions only
   wl -t 20                             # last 20 messages
   wl --format jsonl --all -o full.jsonl
@@ -178,7 +178,7 @@ Examples:
     return p
 
 
-_SOURCE_CHAR = {"cc": "C", "vscode": "V", "wl": "W"}
+_SOURCE_CHAR = {"cc": "C", "vscode": "V", "wl": "W", "codex": "X"}
 
 
 def _print_sessions_table(rows: list[dict]):
