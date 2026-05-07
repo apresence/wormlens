@@ -41,7 +41,11 @@ output-rate tokens to generate the summary, plus prefill-rate tokens
 to load it into the fresh post-compact context. The session itself is
 already in context (that's how compact triggered in the first place);
 what's new and expensive is the generation pass at output rate.
-Wormlens extraction is mechanical: **zero model tokens**.
+Wormlens skips the generation pass entirely -- extraction is
+mechanical, **no model tokens to produce the extract**. The next
+session still pays prefill to ingest the recall (any context costs
+prefill), so the win is the avoided output-rate hit, not free-context
+overall.
 
 Compact also reserves a chunk of the context window for the summary
 itself, leaving the active agent fewer tokens to actually work with.
