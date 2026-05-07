@@ -96,22 +96,53 @@ Not suitable for measurement-grade claims. Use cl100k for
 opus-4-6/sonnet-4-6/haiku-4-5; flag opus-4-7 results as
 approximate.
 
+## Three measurement methods
+
+Each method measures a different thing:
+
+| method | what it measures | n | median tokens | median residue |
+|---|---|---:|---:|---:|
+| **tiktoken** (cl100k on summary text) | summary text only | 43 | 4,349 | 2.17% |
+| **postTokens** (compactMetadata) | summary + system prompt + tools | 7 | 6,978 | 3.49% |
+| **derived** (cache_creation_next - baseline) | summary + system + user msg + new tools | 40 | 12,354 | 6.18% |
+
+Where all three exist (n=5), the ratios are consistent:
+derived ~4x tiktoken, postTokens ~2.7x tiktoken. The multipliers
+reflect layered overhead, not noise.
+
+**Which number for which claim:**
+
+- **Residue / working room**: use tiktoken. System prompt + tools are
+  identical in compact and wormlens scenarios -- they're constants.
+  The incremental cost of compact is the summary text alone.
+- **Per-turn billing**: use derived (or postTokens where available).
+  The API bills the full context including system overhead, so the
+  per-turn carrying cost uses the total prefill, not the summary-only
+  slice.
+
 ## Headline distributions
 
 | metric                       | n  | median  | p25     | p75     | p95     |
 |------------------------------|----|---------|---------|---------|---------|
 | `pre_tokens`                 | 49 | 167,286 | 167,050 | 168,182 | 171,715 |
-| `summary_tokens` (tiktoken)  | 43 |   4,349 |   2,864 |   5,291 |   8,823 |
 | `ctx_at_trigger_pct`         | 49 |   83.6% |   83.5% |   84.1% |   85.9% |
 | `waste_zone_pct`             | 49 |   16.4% |   15.9% |   16.5% |   24.1% |
-| `summary_residue_pct`        | 43 |    2.2% |    1.4% |    2.6% |    4.4% |
-| `generation_cost_usd`        | 43 |  $0.192 |  $0.155 |  $0.216 |  $0.304 |
-| `prefill_cost_per_turn_usd`  | 43 | $0.0022 | $0.0014 | $0.0026 | $0.0044 |
 
-Generation cost uses tiktoken summary tokens at the session model's
-output rate, plus `preTokens` at cache_read rate. Prefill cost uses
-tiktoken summary tokens at cache_read rate (the per-turn carrying
-cost of the summary in the post-compact context).
+Summary size and cost (split by purpose):
+
+| metric | source | n | median | p25 | p75 | p95 |
+|---|---|---:|---:|---:|---:|---:|
+| summary tokens (residue) | tiktoken | 43 | 4,349 | 2,864 | 5,291 | 8,823 |
+| summary residue (% of window) | tiktoken | 43 | 2.2% | 1.4% | 2.6% | 4.4% |
+| summary gen cost (output rate) | tiktoken | 43 | $0.109 | $0.072 | $0.132 | $0.221 |
+| total gen cost (+ preTokens read) | tiktoken+JSONL | 43 | $0.192 | $0.155 | $0.216 | $0.304 |
+| prefill per turn (full context) | derived | 40 | $0.0062 | $0.0036 | $0.0080 | $0.0113 |
+
+Generation cost = tiktoken summary tokens at session model's output
+rate, plus `preTokens` at cache_read rate (the summary call reads
+the full conversation to produce the summary). Prefill per turn =
+derived tokens at cache_read rate (the API bills the full
+post-compact context, not the summary-only slice).
 
 ## Compacts per session (deduped)
 
@@ -133,18 +164,21 @@ model's input/cache_read/cache_creation/output rates:
 
 ## What the README hypotheticals got wrong
 
-| Quantity                          | README hypothetical | Measured (tiktoken, median) |
-|-----------------------------------|--------------------:|----------------------------:|
-| ctx at trigger                    |             ~80-85% |                       83.6% |
-| summary residue (% of window)    |                ~20% |                        2.2% |
-| summary gen cost (Opus, per-compact) |            ~$1.0 |                       $0.19 |
-| per-turn carry cost (Opus)        |              ~$0.02|                      $0.002 |
+| Quantity                          | README hypothetical | Measured | source |
+|-----------------------------------|--------------------:|---------:|--------|
+| ctx at trigger                    |             ~80-85% |    83.6% | JSONL compactMetadata |
+| summary residue (% of window)    |                ~20% |     2.2% | tiktoken (summary text only) |
+| summary gen cost (Opus)           |              ~$1.00 |    $0.19 | tiktoken + JSONL preTokens |
+| per-turn carry cost (Opus)        |              ~$0.02 |   $0.006 | derived (full post-compact context) |
 
 The hypothetical overstated summary residue by ~9x and per-compact
-cost by ~5x. Direction of the asymmetry vs. wormlens is unchanged
-(compact still pays output rate to generate a summary; wormlens
-extracts mechanically), but the absolute magnitude is much smaller
-than the original numbers suggested.
+gen cost by ~5x. Per-turn carry cost was ~3x high. Direction of the
+asymmetry vs. wormlens is unchanged (compact still pays output rate
+to generate a summary; wormlens extracts mechanically), but the
+absolute magnitude is much smaller than the original numbers
+suggested. The asymmetry argument's weight shifts to the non-token
+layers: degradation laundering, waste-zone tokens, and developer
+flow state.
 
 ## Reproduce
 

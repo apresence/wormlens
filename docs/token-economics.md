@@ -95,13 +95,20 @@ the agent does any work. Wormlens has no waste-zone reserve, so
 post-recall sessions are at ~6% committed.
 **Working room: ~82% (compact) vs ~94% (wormlens).**
 
-| Layer | Compact (4.3K summary, median) | Wormlens (12K extract) |
+| Layer | Compact | Wormlens (12K extract) |
 |---|---|---|
-| Generation (output rate, $25/M) | 4.3K x $25/M = **$0.109** | $0 (mechanical) |
-| Generation also reads preTokens (~167K) at cache-read $0.50/M [^1] | 167K x $0.50/M = **$0.084** | $0 |
-| First prefill + cache write 5-min (1.25x x $5/M) | 4.3K x $6.25/M = $0.027 | 12K x $6.25/M = $0.075 |
-| Each cache-hit replay (0.1x x $5/M) | 4.3K x $0.50/M = $0.0022 | 12K x $0.50/M = $0.006 |
-| **First-boundary total** | **~$0.22 (median)** | **~$0.075** |
+| Generation (output rate, $25/M) | 4.3K x $25/M = **$0.109** [a] | $0 (mechanical) |
+| Generation reads preTokens (~167K) at cache-read $0.50/M [^1] | 167K x $0.50/M = **$0.084** | $0 |
+| First prefill + cache write 5-min (1.25x x $5/M) | 4.3K x $6.25/M = $0.027 [a] | 12K x $6.25/M = $0.075 |
+| Each cache-hit replay (0.1x x $5/M) | 12.4K x $0.50/M = $0.0062 [b] | 12K x $0.50/M = $0.006 |
+| **First-boundary total** | **~$0.22** | **~$0.075** |
+
+[a] Summary text only (4.3K tokens, tiktoken cl100k median). Used
+for residue/working-room claims because system prompt + tools are
+identical in both scenarios.
+[b] Full post-compact context (12.4K tokens, derived from JSONL
+`cache_creation` deltas). Used for per-turn billing because the API
+charges the full prefill including system overhead.
 
 **~3x cost ratio per boundary at the median**, before any of the
 layers below. The cost gap is narrower than the pre-measurement
