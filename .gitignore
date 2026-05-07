@@ -13,4 +13,5 @@ chatlog/
 *.jsonl
 *.chat
 *.wl
+!tests/fixtures/**/*.jsonl
 WL-EPISODIC-HANDOFF.md
