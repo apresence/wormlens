@@ -1,13 +1,65 @@
 # wormlens
 
-**Kill pancake brain.** Give your agent lossless episodic memory with near-zero token overhead.
+**Kill pancake brain.** Episodic memory handoff between agent sessions -- no
+compact required.
 
-Universal chat history extraction for Claude Code and VS Code Copilot. Reads raw JSONL session logs and produces compact, addressable extracts that agents can consume as context -- no more lossy compacts, no more 5-minute waits, no more drilling the wrong wall.
+Pluggable chat history extraction for Claude Code and VS Code Copilot. Reads
+raw session logs and produces token-efficient, addressable extracts that
+agents can consume as context -- no more lossy compacts, no more 5-minute
+waits, no more drilling the wrong wall.
 
-- **Instant** -- extracts in milliseconds, not minutes
-- **Lossless** -- preserves decisions, intent, and momentum the model would discard
-- **Addressable** -- turn numbers map to source lines for random-access retrieval
-- **~10 tokens/turn overhead** -- cheaper than any summary
+> Has this ever happened to you? You're happily coding with your companion
+> agent, lining 'em up and knocking 'em down. Then -- BAM! Blindsided by
+> compact. Agent gets pancake brain. You get an aneurysm staring at a
+> spinner for 5 minutes. And then, it all goes oh so very pear shaped. 🍐
+
+Wormlens skips the compact entirely. Mechanically extract the prior
+session, hand it to the next one, keep going.
+
+- **Extract, not compact.** Compact is for garbage. Extract is for nectar.
+- **Instant** -- extracts in milliseconds, not minutes.
+- **Lossless** -- user/assistant text preserved verbatim by default;
+  thinking, tool calls, and bash output opt-in via flags. Nothing is
+  paraphrased or reduced by a model.
+- **Addressable** -- turn numbers map to source lines for random-access
+  retrieval of any prior turn.
+- **Historical** -- chain recalls across sessions. Today's recall can
+  include yesterday's, which includes the one before. Walk back as far
+  as you need.
+- **Agent-driven** -- the agent decides whether to recall, what to
+  recall, and when to hand off. Wormlens injects authoritative
+  `context_used_pct` and `time` into every turn (~10 tokens) so the
+  agent has the telemetry to make those calls.
+- **Unified** -- list, grep, search, summarize across providers (Claude
+  Code, VS Code Copilot now; pluggable for others).
+
+## Why it's cheap
+
+Native compact feeds the entire session through the model to generate a
+summary, paying full output-token rate at whichever tier the session is
+running on (Opus session compacts on Opus). Wormlens extraction is
+mechanical: **zero model tokens**.
+
+Compact also reserves a chunk of the context window for the summary
+itself, leaving the active agent fewer tokens to actually work with.
+After a wormlens recall, the new session sits at ~6% of the window
+used. Compact sits at ~20% summary residue + ~25% reserved for the next
+auto-compact = ~45% committed before any work. **Working room: ~94%
+(wormlens) vs ~55% (compact).**
+
+There are five cost layers (inference, prefill, degradation laundering,
+waste tokens in the danger zone, and developer flow state). Wormlens
+wins all five. The flow-state layer alone runs ~60x cheaper -- a senior
+developer at $100/hour costs roughly $100/session in compact-induced
+block + recovery vs ~$1.67/session of clean handoff.
+
+See [docs/token-economics.md](docs/token-economics.md) for the
+five-layer accounting with current Anthropic pricing, and
+[docs/agent-agency.md](docs/agent-agency.md) for the design philosophy.
+
+\* Percentages and dollar figures are swag-grade pending formal
+measurement. Numbers come from observed behavior on a 200K Opus context
+window; your workflow may vary.
 
 ## Installation
 
@@ -51,11 +103,8 @@ wl *.jsonl --merge -o merged.md      # merge explicit JSONL files
 wl --summary-stats                   # show session statistics
 ```
 
-Bare `wl` (no args, no `--session`) attempts recovery-mode auto-select from
-the project's CC session directory; it only succeeds when the current working
-directory maps to a project that has CC sessions on disk. For deterministic
-extraction in scripts and CI, always pass `--session <UUID>` (use
-`--list-sessions` to discover IDs).
+Bare `wl` (no args) prints help. For extraction, always pass `--session
+<UUID>` -- use `--list-sessions` to discover IDs.
 
 ## Sources
 
@@ -87,7 +136,7 @@ By default, only user and assistant messages are included. Add flags to include 
 
 | Format | Flag | Notes |
 |--------|------|-------|
-| Chat | `--format chat` (default) | Ultra-compact XML-style tags, ~10 tokens/turn, agent-optimized |
+| Chat | `--format chat` (default) | Token-efficient XML-style turn wrappers, agent-optimized |
 | Markdown | `--format md` | Structured with headers, turn numbers, metadata |
 | Plain text | `--format txt` | Session/role markers, no formatting |
 | JSONL | `--format jsonl` | One JSON record per message |
@@ -142,13 +191,15 @@ By default they are filtered out. Use `--system-msgs` (or `--all`) to include th
 
 ## Recovery Mode (Claude Code)
 
-When run with no input and no `--full` flag, wormlens operates in **recovery mode**:
+`wl --recall --session <UUID>` operates in **recovery mode**:
 
 1. Finds the last `compact_boundary` marker in the session file
 2. Extracts only messages after that point
-3. If the newest session file is tiny (<100KB), falls back to the previous substantial session
+3. Wraps the output in `<wl-recall-caveat>` tags so the consuming agent
+   recognizes it as recovered episodic memory, not live conversation
 
-This gives you the "current conversation" without wading through compacted history. Use `--full` to extract the entire file.
+Use `--full` to extract the whole session file regardless of compact
+boundaries.
 
 ## VS Code State Reconstruction
 
@@ -263,6 +314,35 @@ your real `~/.claude` tree.
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for release notes.
+
+## See also
+
+- **Design notes**:
+  - [docs/agent-agency.md](docs/agent-agency.md) -- why agent-driven
+    memory wins; how telemetry + tools beat framework-curated context.
+  - [docs/token-economics.md](docs/token-economics.md) -- five-layer
+    cost analysis of compact vs. wormlens with current Anthropic
+    pricing.
+- **[spad-mcp](https://github.com/apresence/spad-mcp)** -- the
+  autonomous, agent-controlled SSH harness we use for wormlens
+  development. Two roles in the dev cycle:
+  - **Dev / test / debug**: specs in, fully-tested ready-to-ship out.
+    An agent installs wormlens, verifies the skill loads and hooks
+    fire, exercises the outer-loop restart on handoff -- including
+    the Claude-extension scaffolding (skill packaging, hook wiring,
+    settings.json merge). Bugs kick back to a human; clean runs ship.
+    Generalizes to other agent tools beyond CC.
+  - **Benchmarks**: agent-as-proctor + agent-as-testee, fully
+    autonomous across the comparison matrix (compact-only,
+    wl+compact, wl-only, fresh-start). Real workloads, real numbers,
+    no wetware.
+
+  Despite urgency to ship wormlens, the debug cadence was too slow
+  with humans in the loop and fair, consistent benchmarks were
+  impractical without an autonomous runner. So we paused wormlens
+  and pivoted to spad-mcp -- we needed it to properly test and
+  finish wormlens at a reasonable pace. Dogfooding: spad runs long
+  unattended sessions; wormlens keeps them coherent.
 
 ## Known Limitations
 
