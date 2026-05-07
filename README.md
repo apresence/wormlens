@@ -50,15 +50,15 @@ overall.
 Compact also reserves a chunk of the context window for the summary
 itself, leaving the active agent fewer tokens to actually work with.
 
-Measured on our own JSONLs (200K Opus window, n=49 compacts in 24
-sessions): a wormlens recall lands at ~6% of window; the median
-compact summary residue is **5.9% of window** (3.9% on the
-direct-postTokens subset), and CC fires auto-compact at **83.6% of
+Measured on our own JSONLs (200K Opus window, n=43 compact summaries
+in 24 sessions, tokenized with tiktoken cl100k): a wormlens recall
+lands at ~6% of window; the median compact summary is **4,349
+tokens (2.2% of window)**, and CC fires auto-compact at **83.6% of
 window** (median, p25=83.5%, p75=84.1%). So a compacted session is
-sitting on ~6% summary + ~16% waste-zone reserve = **~22%
+sitting on ~2% summary + ~16% waste-zone reserve = **~18%
 committed** before any work. Wormlens has no waste-zone reserve, so
 post-recall sessions sit at ~6%. **Working room: ~94% (wormlens) vs
-~78% (compact).**
+~82% (compact).**
 
 There are five cost layers (inference, prefill, degradation laundering,
 waste tokens in the danger zone, and developer flow state). Wormlens
@@ -73,8 +73,8 @@ pricing, [docs/measurements.md](docs/measurements.md) for the full
 distribution tables and methodology, and
 [docs/agent-agency.md](docs/agent-agency.md) for the design philosophy.
 
-The token-cost layers above are measured (n=49 compacts, median;
-range p25-p75). The flow-state layer ($100/session vs $1.67/session)
+The token-cost layers above are measured (n=43 summaries, tiktoken
+cl100k_base). The flow-state layer ($100/session vs $1.67/session)
 remains illustrative -- it requires logging real handoff durations,
 recovery times, and block durations across a sample of users, which
 isn't extractable from JSONL alone.

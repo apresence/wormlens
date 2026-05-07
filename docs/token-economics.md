@@ -69,18 +69,18 @@ So compact pays full output-token price to generate a larger artifact,
 then pays prefill price to replay it. Wormlens pays zero to generate a
 smaller artifact, then pays less prefill to replay it.
 
-## Per-boundary cost in real money (Opus 4.7, measured n=49)
+## Per-boundary cost in real money (Opus, measured n=43)
 
-Numbers below are measured from `wl --analyze-compacts` against the
-maintainer's session JSONLs. Sample: n=49 compacts in 24 sessions,
-deduped by (sessionId, compact_idx). Full distributions in
-`docs/measurements.md`.
+Numbers below are measured from the maintainer's session JSONLs.
+Summary text extracted from `isCompactSummary=True` records and
+tokenized with tiktoken cl100k_base. Sample: n=43 compact summaries
+in 24 sessions. Full distributions in `docs/measurements.md`.
 
-- **Compact residue: 11.7K tokens (5.9% of a 200K window)** at the
-  median. p25=3.6%, p75=8.0%, p95=10.2%. The direct-postTokens
-  subset (n=7, no derivation noise) shows a tighter median of 7.7K
-  tokens (3.9%). Older measurement runs assumed ~20% residue;
-  reality is roughly a third of that.
+- **Compact summary: 4,349 tokens (2.2% of a 200K window)** at the
+  median. p25=1.4%, p75=2.6%, p95=4.4%. Earlier estimates using
+  `compactMetadata.postTokens` or derived heuristics overstated
+  this because they included system prompt + tool definitions in
+  the count; the summary text alone is much smaller.
 - **Wormlens recall: ~12K tokens (~6% of a 200K window)** as an
   upper bound on agent-driven recall (still illustrative -- not yet
   measured at v0.1). The agent typically slices smaller via
@@ -90,36 +90,38 @@ deduped by (sessionId, compact_idx). Full distributions in
 CC fires auto-compact at **83.6% of window** (n=49 median, p25=83.5%,
 p75=84.1%). The waste-zone reserve (the slice between trigger and
 window-full) is **16.4% of window**. So a compacted session sits on
-~6% summary + ~16% waste-zone reserve = **~22% committed** before
+~2% summary + ~16% waste-zone reserve = **~18% committed** before
 the agent does any work. Wormlens has no waste-zone reserve, so
 post-recall sessions are at ~6% committed.
-**Working room: ~78% (compact) vs ~94% (wormlens).**
+**Working room: ~82% (compact) vs ~94% (wormlens).**
 
-| Layer | Compact (11.7K summary, median) | Wormlens (12K extract) |
+| Layer | Compact (4.3K summary, median) | Wormlens (12K extract) |
 |---|---|---|
-| Generation (output rate, $25/M) | 11.7K x $25/M = **$0.29** | $0 (mechanical) |
+| Generation (output rate, $25/M) | 4.3K x $25/M = **$0.109** | $0 (mechanical) |
 | Generation also reads preTokens (~167K) at cache-read $0.50/M [^1] | 167K x $0.50/M = **$0.084** | $0 |
-| First prefill + cache write 5-min (1.25x x $5/M) | 11.7K x $6.25/M = $0.073 | 12K x $6.25/M = $0.075 |
-| Each cache-hit replay (0.1x x $5/M) | 11.7K x $0.50/M = $0.0058 | 12K x $0.50/M = $0.006 |
-| **First-boundary total** | **~$0.45 (median)** | **~$0.075** |
+| First prefill + cache write 5-min (1.25x x $5/M) | 4.3K x $6.25/M = $0.027 | 12K x $6.25/M = $0.075 |
+| Each cache-hit replay (0.1x x $5/M) | 4.3K x $0.50/M = $0.0022 | 12K x $0.50/M = $0.006 |
+| **First-boundary total** | **~$0.22 (median)** | **~$0.075** |
 
-**~6x cost ratio per boundary at the median**, before any of the
-layers below. (Pre-measurement estimate was ~17x. Direction is
-unchanged; absolute magnitude is smaller than the early swag.)
+**~3x cost ratio per boundary at the median**, before any of the
+layers below. The cost gap is narrower than the pre-measurement
+estimate (~17x) because the summary is much smaller than assumed.
+The asymmetry's center of gravity shifts to the non-token layers:
+degradation laundering, waste-zone tokens, and developer flow state.
 
 Per-session totals: median session bill across the deduped sample is
 $50.10 (input + cache_read + cache_creation + output, summed at
 dominant-model rates). The compact-generation slice of total session
-bill is roughly **1% (median)** -- the much bigger cost is the
-session's bulk inference. The compact's *carrying cost* (per-turn
-prefill of the summary) compounds across the rest of the session;
-that's what scales, not the one-time gen.
+bill is **<1% (median)** -- the much bigger cost is the session's
+bulk inference. The compact's *carrying cost* (per-turn prefill of
+the summary) compounds across the rest of the session; that's what
+scales, not the one-time gen.
 
 [^1]: The $0.50/M cache-read rate assumes the compact summary call
   benefits from the same KV-cache prefix that interactive turns use.
   If CC issues an un-cached `messages.create` for the summary, the
   preTokens read incurs the input rate ($5/M), and the median Opus
-  per-boundary jumps to roughly $1.21. Indirect evidence
+  per-boundary jumps to roughly $0.86. Indirect evidence
   (`cache_read_input_tokens` is preserved across the boundary) is
   consistent with the cache-read assumption, but it's not directly
   verified -- direct verification needs claude-trace HTTP logs
@@ -155,11 +157,12 @@ the next prefill incurs the write penalty (1.25x at 5-minute, 2x at
 1-hour) again.
 
 This compounds the boundary cost asymmetry. A compact summary at the
-measured 11.7K-token median that gets evicted between sessions
-re-pays cache-write (11.7K x $6.25/M = $0.073 on Opus) every time. A
-wl extract at 12K re-pays $0.075. At the median the two are
-comparable per eviction; the asymmetry shows up at p95 (compact at
-20.4K = $0.128 vs. wormlens at 12K = $0.075) and on every continuing
+measured 4.3K-token median that gets evicted between sessions re-pays
+cache-write (4.3K x $6.25/M = $0.027 on Opus) every time. A wl
+extract at 12K re-pays $0.075. At the median the compact summary is
+actually *cheaper* per eviction because it's smaller than a full
+recall -- the asymmetry shows up at p95 (compact at 8.8K = $0.055
+vs. wormlens at 12K = $0.075) and more importantly on every continuing
 turn that pays the per-turn prefill, where the summary-vs-extract
 size delta multiplies across session length.
 

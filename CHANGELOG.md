@@ -26,12 +26,13 @@ Semantic Versioning.
 
 ### Documentation
 
-- Compact behavior measured (n=49 compacts in 24 sessions, deduped,
-  CC 2.1.49--2.1.128, opus-4-6/4-7 + sonnet-4-6). Median
-  ctx-at-trigger 83.6%, median post-compact residue 5.9% of 200K
-  window (3.9% direct-postTokens subset), median Opus gen cost $0.34.
-  Replaces hypotheticals in README and `docs/token-economics.md`;
-  adds `docs/measurements.md` with full distributions and methodology.
+- Compact behavior measured (n=43 summaries in 24 sessions, deduped,
+  CC 2.1.49--2.1.128, opus-4-6/4-7 + sonnet-4-6, tokenized with
+  tiktoken cl100k_base). Median ctx-at-trigger 83.6%, median
+  summary-only residue 2.2% of 200K window (4,349 tokens), median
+  Opus gen cost $0.19. Replaces hypotheticals in README and
+  `docs/token-economics.md`; adds `docs/measurements.md` with full
+  distributions and methodology.
 
 ## [0.1.0] - 2026-05-06
 

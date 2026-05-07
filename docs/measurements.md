@@ -7,21 +7,17 @@ JSONLs.
 **Methodology:** read every CC session JSONL on disk, filter to
 sessions >=100 KB and exclude spawned subagent transcripts
 (`agent-*.jsonl`). For every `system / compact_boundary` record,
-compute the per-compact metrics from `compactMetadata` plus the
-neighboring assistant turns. Dedup by `(session_id,
-compact_idx_in_session)` since the maintainer's archive holds the
-same JSONLs across multiple hosts and backup dirs.
+extract the compact summary text from the adjacent
+`isCompactSummary=True` user record (which CC writes immediately
+after the compact_boundary). Tokenize using tiktoken cl100k_base
+(correct for opus-4-6, sonnet-4-6, haiku-4-5; approximation for
+opus-4-7 which uses a newer opaque tokenizer). Dedup by
+`(session_id, pre_tokens, content_length)` since the maintainer's
+archive holds the same JSONLs across multiple hosts and backup dirs.
 
-**Sample:** n=49 compacts in 24 unique sessions, spanning CC versions
-2.1.49 through 2.1.128, models claude-opus-4-6/4-7, claude-sonnet-4-6.
-n=7 of those 49 carry direct `compactMetadata.postTokens`; the other
-42 use a derived estimator (`cache_creation_input_tokens` of the
-first post-compact assistant turn, minus the session's
-fresh-baseline `cache_creation`). The derived estimator overshoots
-direct postTokens by a median of +22.6% because the post-compact
-turn's cache_creation includes the post-compact user message and any
-new tool definitions discovered since session start, not just the
-summary.
+**Sample:** n=43 compact summaries in 24 unique sessions, spanning CC
+versions 2.1.49 through 2.1.128, models claude-opus-4-6/4-7 and
+claude-sonnet-4-6.
 
 **Caveats:**
 
@@ -30,40 +26,92 @@ summary.
 2. Summary generation is charged at `cache_read_rate` ($0.50/M for
    Opus), assuming the summary call benefits from the same
    KV-cache prefix that interactive turns use. If CC issues an
-   un-cached `messages.create` for the summary, gen costs are 10x
-   higher (median Opus gen $0.38 -> $3.81). Indirect evidence
-   (`cache_read_input_tokens` is preserved across the boundary)
-   supports the cache-read assumption, but it's not directly
-   verified.
+   un-cached `messages.create` for the summary, the `preTokens`
+   read incurs `input_rate` ($5/M for Opus) and gen costs are 10x
+   higher. Indirect evidence (`cache_read_input_tokens` is
+   preserved across the boundary) supports the cache-read
+   assumption, but it's not directly verified.
 3. No per-record `cost` field exists in any CC session JSONL we
    examined. All dollar figures are derived from token counts at
    the rates published in `docs/token-economics.md`.
+4. Opus 4.7 uses an opaque tokenizer (not cl100k); 3 of 43
+   summaries are opus-4-7 and use cl100k as an approximation.
 
-## Headline distributions (deduped, n=49 compacts)
+## Summary-text token counts (tiktoken cl100k, n=43)
+
+The compact summary text is the `isCompactSummary=True` record's
+`message.content` -- a plain string starting with "This session is
+being continued from a previous conversation..." that CC injects as
+a synthetic user message after the compact_boundary.
+
+| stat     | tokens |
+|----------|-------:|
+| min      |  1,779 |
+| p25      |  2,864 |
+| median   |  4,349 |
+| mean     |  4,433 |
+| p75      |  5,291 |
+| p95      |  8,823 |
+| max      |  9,982 |
+
+**Summary-only residue** (tiktoken tokens / 200K window):
+
+| stat     | residue |
+|----------|--------:|
+| min      |   0.89% |
+| median   |   2.17% |
+| mean     |   2.22% |
+| max      |   4.99% |
+
+## What `postTokens` actually measures
+
+7 of 43 compacts carry both `compactMetadata.postTokens` (from newer
+CC versions) and the `isCompactSummary` text. Comparing:
+
+| postTokens | tiktoken (summary text) | overhead |
+|-----------:|------------------------:|---------:|
+|      2,586 |                   1,779 |      807 |
+|      3,561 |                   2,749 |      812 |
+|      5,846 |                   2,281 |    3,565 |
+|      6,978 |                   3,585 |    3,393 |
+|      7,747 |                   2,881 |    4,866 |
+|     11,593 |                   2,814 |    8,779 |
+|     15,052 |                   2,757 |   12,295 |
+
+Median overhead: **3,565 tokens**. `postTokens` is NOT summary-text
+tokens -- it includes the post-compact context size (system prompt,
+tool definitions, and the summary). The summary text alone is
+typically 18-77% of `postTokens`.
+
+## chars/3.0 heuristic accuracy
+
+Compared chars/3.0 (the offline heuristic documented for Claude
+models without a public tokenizer) against tiktoken cl100k on the
+same text:
+
+- Median error: **+27.2%** (always overshoots)
+- Range: +18.8% to +40.1%
+
+Not suitable for measurement-grade claims. Use cl100k for
+opus-4-6/sonnet-4-6/haiku-4-5; flag opus-4-7 results as
+approximate.
+
+## Headline distributions
 
 | metric                       | n  | median  | p25     | p75     | p95     |
 |------------------------------|----|---------|---------|---------|---------|
 | `pre_tokens`                 | 49 | 167,286 | 167,050 | 168,182 | 171,715 |
-| `summary_tokens`             | 49 |  11,694 |   7,215 |  15,960 |  20,392 |
+| `summary_tokens` (tiktoken)  | 43 |   4,349 |   2,864 |   5,291 |   8,823 |
 | `ctx_at_trigger_pct`         | 49 |   83.6% |   83.5% |   84.1% |   85.9% |
 | `waste_zone_pct`             | 49 |   16.4% |   15.9% |   16.5% |   24.1% |
-| `post_compact_residue_pct`   | 49 |    5.9% |    3.6% |    8.0% |   10.2% |
-| `generation_cost_usd`        | 49 |  $0.337 |  $0.226 |  $0.465 |  $0.593 |
-| `cache_write_cost_usd`       | 49 |  $0.064 |  $0.044 |  $0.095 |  $0.127 |
-| `prefill_cost_per_turn_usd`  | 49 |  $0.005 |  $0.004 |  $0.008 |  $0.010 |
-| `duration_ms`                |  7 |  89,189 |  84,110 | 105,942 | 172,458 |
+| `summary_residue_pct`        | 43 |    2.2% |    1.4% |    2.6% |    4.4% |
+| `generation_cost_usd`        | 43 |  $0.192 |  $0.155 |  $0.216 |  $0.304 |
+| `prefill_cost_per_turn_usd`  | 43 | $0.0022 | $0.0014 | $0.0026 | $0.0044 |
 
-## Direct-postTokens subset (n=7, the cleanest sample)
-
-| metric                       |  median  | mean    |
-|------------------------------|---------:|--------:|
-| `summary_tokens`             |    7,747 |   7,623 |
-| `post_compact_residue_pct`   |     3.5% |    3.8% |
-| `generation_cost_usd` (Opus) |   $0.260 |  $0.191 |
-
-Auto-trigger only, direct-postTokens (n=5): median residue
-**3.87%**, median summary 7,747 tokens, median Opus gen
-**$0.260**.
+Generation cost uses tiktoken summary tokens at the session model's
+output rate, plus `preTokens` at cache_read rate. Prefill cost uses
+tiktoken summary tokens at cache_read rate (the per-turn carrying
+cost of the summary in the post-compact context).
 
 ## Compacts per session (deduped)
 
@@ -81,34 +129,32 @@ model's input/cache_read/cache_creation/output rates:
 |-----------------------|---------|
 | median session bill   | $50.10  |
 | max session bill      | $1,345  |
-| median compact share  |   1.0%  |
-
-Compact-summary generation is a small slice of total session spend
-(typically 0.5-2%). The much bigger ongoing cost is the per-turn
-**carrying cost** of the summary in the post-compact context: at
-median 11.7K tokens at the Opus cache_read rate ($0.50/M), every
-post-compact turn pays roughly **$0.0058 just to keep the summary
-in scope**, multiplied by however many turns the session continues.
+| median compact share  |  <1.0%  |
 
 ## What the README hypotheticals got wrong
 
-| Quantity                                | README hypothetical | Measured (median, deduped) |
-|-----------------------------------------|--------------------:|---------------------------:|
-| ctx at trigger                          |             ~80-85% |                      83.6% |
-| post-compact residue (% of window)      |                ~20% |                       5.9% |
-| summary gen cost (Opus)                 |               ~$1.0 |                     $0.34  |
-| per-turn carry cost (Opus)              |               ~$0.02|                     $0.005 |
+| Quantity                          | README hypothetical | Measured (tiktoken, median) |
+|-----------------------------------|--------------------:|----------------------------:|
+| ctx at trigger                    |             ~80-85% |                       83.6% |
+| summary residue (% of window)    |                ~20% |                        2.2% |
+| summary gen cost (Opus, per-compact) |            ~$1.0 |                       $0.19 |
+| per-turn carry cost (Opus)        |              ~$0.02|                      $0.002 |
 
-Order of magnitude on `ctx_at_trigger` is right. The summary
-residue and per-compact dollar cost were both overstated by
-roughly 3x. Direction of the asymmetry vs. wormlens is unchanged
+The hypothetical overstated summary residue by ~9x and per-compact
+cost by ~5x. Direction of the asymmetry vs. wormlens is unchanged
 (compact still pays output rate to generate a summary; wormlens
-extracts mechanically), but the absolute magnitude is smaller
+extracts mechanically), but the absolute magnitude is much smaller
 than the original numbers suggested.
 
 ## Reproduce
 
-The script and per-row CSV are gitignored under `.copilot/` for
-the maintainer's local copy. v0.2's `wl --analyze-compacts`
-mode will let any user run the same analysis on their own
-corpus.
+The scripts and per-row CSVs are gitignored under `.copilot/` for
+the maintainer's local copy. Key artifacts:
+
+- `compact_recon.py` / `compact_recon.json` -- Pass 1 schema recon
+- `analyze_compacts.py` / `compact_rows_dedup.csv` -- Pass 2-3
+- `compact_validation.py` / `compact_validation.md` -- Pass 4
+- `tiktoken_recount.py` / `tiktoken_summary_counts.csv` -- tiktoken pass
+
+v0.2's `wl --analyze-compacts` mode will let any user run the same
+analysis on their own corpus.
