@@ -21,8 +21,9 @@ session, hand it to the next one, keep going.
 - **Lossless** -- user/assistant text preserved verbatim by default;
   thinking, tool calls, and bash output opt-in via flags. Nothing is
   paraphrased or reduced by a model.
-- **Addressable** -- turn numbers map to source lines for random-access
-  retrieval of any prior turn.
+- **Addressable** -- random-access by turn index. Pull a single turn
+  or a slice (e.g. `--index 5-10`) from any extracted session without
+  re-processing the whole thing.
 - **Historical** -- chain recalls across sessions. Today's recall can
   include yesterday's, which includes the one before. Walk back as far
   as you need.
@@ -35,31 +36,37 @@ session, hand it to the next one, keep going.
 
 ## Why it's cheap
 
-Native compact feeds the entire session through the model to generate a
-summary, paying full output-token rate at whichever tier the session is
-running on (Opus session compacts on Opus). Wormlens extraction is
-mechanical: **zero model tokens**.
+Native compact triggers a summary-write at the session's model tier --
+output-rate tokens to generate the summary, plus prefill-rate tokens
+to load it into the fresh post-compact context. The session itself is
+already in context (that's how compact triggered in the first place);
+what's new and expensive is the generation pass at output rate.
+Wormlens extraction is mechanical: **zero model tokens**.
 
 Compact also reserves a chunk of the context window for the summary
 itself, leaving the active agent fewer tokens to actually work with.
-After a wormlens recall, the new session sits at ~6% of the window
-used. Compact sits at ~20% summary residue + ~25% reserved for the next
-auto-compact = ~45% committed before any work. **Working room: ~94%
-(wormlens) vs ~55% (compact).**
+
+Hypothetical (200K Opus window): a wormlens recall might land at ~6%
+used; a compact's summary residue at ~20%, plus another ~25% reserved
+for the next auto-compact, leaves ~45% committed before any work.
+**Working room: ~94% (wormlens) vs ~55% (compact).**\*
 
 There are five cost layers (inference, prefill, degradation laundering,
 waste tokens in the danger zone, and developer flow state). Wormlens
-wins all five. The flow-state layer alone runs ~60x cheaper -- a senior
-developer at $100/hour costs roughly $100/session in compact-induced
-block + recovery vs ~$1.67/session of clean handoff.
+wins all five. The flow-state layer alone might run ~60x cheaper -- a
+senior developer at $100/hour costs roughly $100/session in compact-
+induced block + recovery vs ~$1.67/session of clean handoff (also
+hypothetical until benchmarked).
 
 See [docs/token-economics.md](docs/token-economics.md) for the
 five-layer accounting with current Anthropic pricing, and
 [docs/agent-agency.md](docs/agent-agency.md) for the design philosophy.
 
-\* Percentages and dollar figures are swag-grade pending formal
-measurement. Numbers come from observed behavior on a 200K Opus context
-window; your workflow may vary.
+\* These percentages and dollar figures are illustrative, not
+measured. They give a reader a magnitude estimate while we do the
+honest work: a `wl --analyze-compacts` mode is on the punch list to
+walk our own session JSONLs and produce real numbers from observed
+compacts. Real data will replace the hypotheticals.
 
 ## Installation
 

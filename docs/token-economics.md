@@ -35,11 +35,19 @@ The two ratios that drive the rest of the analysis:
 
 ## 1. Inference cost (the obvious one)
 
-Compact requires the model to generate a summary -- output tokens at
-full inference price. The summary itself is typically 500-2000 tokens
-of output, but it is not unusual for an Opus session to land at 40K
-tokens of summary residue when the underlying conversation was rich
-(see swag math below).
+When compact triggers, the session's content is already in the
+model's context (that's what tripped the threshold). What's new is
+the trigger instruction asking the model to summarize itself, the
+generation pass that produces the summary, and the prefill of that
+summary into the fresh post-compact context. Of the three, the
+generation pass is the expensive one: output tokens at the session's
+model tier (Opus session compacts on Opus, paying $25/M output).
+
+Summary sizes vary widely. Headline numbers in this doc are
+illustrative until we land the mechanical analysis described in the
+`wl --analyze-compacts` punch list -- walking our own session JSONLs
+to measure ctx-at-trigger, summary size, and post-compact residue
+across real workflows.
 
 Wormlens extraction: zero inference. Mechanical text processing. The
 cost is CPU-milliseconds.
@@ -62,15 +70,20 @@ So compact pays full output-token price to generate a larger artifact,
 then pays prefill price to replay it. Wormlens pays zero to generate a
 smaller artifact, then pays less prefill to replay it.
 
-## Per-boundary cost in real money (Opus 4.7, swag numbers)
+## Per-boundary cost in real money (Opus 4.7, hypothetical)
 
-Observed empirical figures from a 200K Opus session:
+The numbers below are illustrative, not measured. Real data lands
+when the `wl --analyze-compacts` measurement pass runs against the
+session JSONLs we already have on disk. Until then:
 
-- **Compact residue: ~40K tokens (~20% of the 200K window)** lands as
-  the fresh context's seed.
-- **Wormlens recall: ~12K tokens (~6% of the 200K window)** lands as
-  the fresh context's seed -- and that's an upper bound; agent-driven
-  recall often slices smaller (see `agent-agency.md`).
+- **Compact residue: ~40K tokens (~20% of a 200K window)** as a
+  rough plausible figure for a session that ran rich enough to hit
+  compact in the first place. Could be smaller for a tighter
+  compact, larger for a verbose one.
+- **Wormlens recall: ~12K tokens (~6% of a 200K window)** as an upper
+  bound on agent-driven recall. The agent typically slices smaller
+  via `--index` (see `agent-agency.md`); this is the "I want most of
+  the prior session" case, not the typical case.
 
 Plus: CC reserves another ~25% of the window as buffer for the *next*
 auto-compact. So a compacted session is sitting on ~20% summary +
@@ -94,8 +107,10 @@ cycle. "Bookended" cost: compact sits between summary residue
 (forward) and reserve buffer (forward), eating the budget from both
 sides.
 
-These numbers are swag-grade pending formal measurement, but the
-direction and order-of-magnitude are correct.
+These figures are hypothetical, intended to give a reader the
+shape and magnitude of the asymmetry. Direction and order of
+magnitude should hold up under measurement; the exact values will
+shift as we land real data from the `wl --analyze-compacts` pass.
 
 ## Model-tier coupling: compact pays at session-model rate
 
@@ -196,7 +211,7 @@ Wormlens handoff:
 - No surprise interruption: handoff is a planned transition, not an
   emergency.
 
-**Cost estimate:** Senior developer at $100/hour.
+**Hypothetical cost estimate:** Senior developer at $100/hour.
 
 - Compact: 3 compacts/session x 5 min blocked + 15 min recovery = 60
   min/session = $100.
@@ -207,9 +222,13 @@ At organizational scale (100 developers, daily usage): compact costs
 ~$10,000/day in developer time. Wormlens costs ~$167/day. The
 difference is $3.5M/year.
 
-These numbers are rough but directionally correct. Even at half this
-estimate, the developer flow state cost dwarfs all token costs
-combined.
+These figures are illustrative, not measured. They are sized to give
+a reader the shape of the asymmetry while we plan the harder
+measurement work (logging real handoff durations, real recovery
+times, and real compact-block durations across a sample of users).
+Even at a fraction of these magnitudes, the flow-state layer plausibly
+dwarfs the token-cost layers; the size and direction are what matter
+for the architectural argument.
 
 ## Summary
 
