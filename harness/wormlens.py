@@ -35,7 +35,6 @@ WL_STATE_DIR = CLAUDE_DIR / ".wormlens"
 HANDOFF_MARKER = WL_STATE_DIR / ".handoff"
 SESSION_LOG = WL_STATE_DIR / "sessions.jsonl"
 LOG_FILE = WL_STATE_DIR / "harness.log"
-CLAUDE_JSON = CLAUDE_DIR / ".claude.json"
 
 
 def log(msg: str):
@@ -88,22 +87,41 @@ def get_last_session_id() -> str | None:
     return None
 
 
-def ensure_trust_dialog(project_dir: str):
-    """Set hasTrustDialogAccepted for the project dir in .claude.json."""
-    try:
-        data = json.loads(CLAUDE_JSON.read_text()) if CLAUDE_JSON.exists() else {}
-    except (json.JSONDecodeError, OSError):
-        data = {}
+def _split_passthru(argv: list[str]) -> tuple[list[str], list[str]]:
+    """Split argv on the first literal `--` separator.
 
-    projects = data.setdefault("projects", {})
-    project = projects.setdefault(project_dir, {})
+    Everything before `--` is for the harness's own argparse;
+    everything after is forwarded verbatim to `claude`.
+    """
+    if "--" in argv:
+        i = argv.index("--")
+        return argv[:i], argv[i + 1:]
+    return argv, []
 
-    if not project.get("hasTrustDialogAccepted"):
-        project["hasTrustDialogAccepted"] = True
-        tmp = CLAUDE_JSON.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, indent=2))
-        tmp.replace(CLAUDE_JSON)
-        log(f"Trust dialog accepted for {project_dir}")
+
+def _extract_session_id(claude_extra: list[str]) -> tuple[str | None, list[str]]:
+    """Lift any user-supplied --session-id (or --session-id=UUID) out of claude_extra.
+
+    Returns (user_session_id_or_None, filtered_extra). The harness uses the
+    returned UUID for its own session tracking and does not double-add the
+    flag to the launch cmd.
+    """
+    user_session_id: str | None = None
+    filtered: list[str] = []
+    i = 0
+    while i < len(claude_extra):
+        token = claude_extra[i]
+        if token == "--session-id" and i + 1 < len(claude_extra):
+            user_session_id = claude_extra[i + 1]
+            i += 2
+            continue
+        if token.startswith("--session-id="):
+            user_session_id = token.split("=", 1)[1]
+            i += 1
+            continue
+        filtered.append(token)
+        i += 1
+    return user_session_id, filtered
 
 
 def build_boot_prompt(
@@ -152,7 +170,7 @@ def _copy_winsize(src_fd: int, dst_fd: int):
         pass
 
 
-def launch_claude(session_id: str):
+def launch_claude(session_id: str, claude_extra: list[str] | None = None):
     """Launch claude in interactive mode under a fresh pty.
 
     Returns (proc, master_fd). The boot prompt is NOT passed positionally --
@@ -160,17 +178,19 @@ def launch_claude(session_id: str):
     mode, which exits in seconds and never fires StatusLine. The harness
     delivers the boot prompt by writing to the master end of the pty after
     CC's interactive UI is ready (signalled by ctx.json appearing).
+
+    Anything in `claude_extra` is forwarded to `claude` verbatim. This is
+    the user's escape hatch for flags like `--model`, `--mcp-config`,
+    `--add-dir`, etc. The harness does not validate these flags; if a user
+    chooses to pass one that disables safety checks, they own that risk.
     """
     master_fd, slave_fd = pty.openpty()
     if sys.stdin.isatty():
         _copy_winsize(sys.stdin.fileno(), slave_fd)
 
-    cmd = [
-        "claude",
-        "--session-id", session_id,
-        "--dangerously-skip-permissions",
-    ]
-    log(f"Launching (interactive pty): claude --session-id {session_id[:8]}...")
+    cmd = ["claude", "--session-id", session_id] + list(claude_extra or [])
+    log(f"Launching (interactive pty): claude --session-id {session_id[:8]}... "
+        f"(passthru: {len(claude_extra or [])} args)")
     proc = subprocess.Popen(
         cmd,
         stdin=slave_fd,
@@ -381,7 +401,16 @@ def kill_claude(proc: subprocess.Popen):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="wormlens outer loop -- infinite session continuity"
+        description="wormlens outer loop -- infinite session continuity",
+        epilog=(
+            "Forwarding flags to claude: anything after a literal `--` is "
+            "passed to the claude binary verbatim. Example:\n"
+            "  wl launch --prompt 'build X' -- --model claude-opus-4-7 "
+            "--append-system-prompt 'be terse'\n"
+            "If you pass --session-id via passthru, the harness uses your "
+            "UUID for its own session tracking (instead of generating one)."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--prompt", default=None, help="Initial task prompt")
     parser.add_argument(
@@ -400,17 +429,17 @@ def main(argv=None):
         "--poll-interval", type=float, default=2.0,
         help="Poll interval in seconds (default: 2.0)"
     )
-    parser.add_argument(
-        "--project-dir", default=None,
-        help="Project directory for trust dialog (default: cwd)"
-    )
-    args = parser.parse_args(argv)
+
+    raw_argv = sys.argv[1:] if argv is None else list(argv)
+    own_argv, claude_extra = _split_passthru(raw_argv)
+    args = parser.parse_args(own_argv)
+
+    user_session_id, claude_extra = _extract_session_id(claude_extra)
+    if user_session_id:
+        log(f"session_id provided via passthru: {user_session_id}")
 
     WL_STATE_DIR.mkdir(parents=True, exist_ok=True)
     HANDOFF_MARKER.unlink(missing_ok=True)
-
-    project_dir = args.project_dir or os.getcwd()
-    ensure_trust_dialog(project_dir)
 
     log("=" * 50)
     log("wormlens outer loop starting")
@@ -428,13 +457,17 @@ def main(argv=None):
 
     while True:
         session_num += 1
-        session_id = str(uuid.uuid4())
+        if user_session_id:
+            session_id = user_session_id
+            user_session_id = None  # consume; subsequent iterations generate fresh
+        else:
+            session_id = str(uuid.uuid4())
         HANDOFF_MARKER.unlink(missing_ok=True)
 
         log(f"--- SESSION #{session_num} ({session_id[:8]}) ---")
 
         boot = build_boot_prompt(session_num, prev_session_id, args.prompt)
-        proc, master_fd = launch_claude(session_id)
+        proc, master_fd = launch_claude(session_id, claude_extra)
 
         reason = wait_for_exit_or_handoff(
             proc, master_fd, session_id, boot,

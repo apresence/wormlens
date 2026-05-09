@@ -299,7 +299,6 @@ wl launch                                # interactive, no initial prompt
 wl launch --prompt "build a redis server" # start with a task
 wl launch --ctx-limit 85 --hard-kill 95  # tighter thresholds
 wl launch --grace 30                     # shorter grace period before kill
-wl launch --project-dir /path/to/repo    # explicit project dir
 ```
 
 | Flag | Default | Effect |
@@ -309,10 +308,35 @@ wl launch --project-dir /path/to/repo    # explicit project dir
 | `--hard-kill` | 99 | Context %% at which to force kill |
 | `--grace` | 60 | Seconds after URGENT before forced handoff |
 | `--poll-interval` | 2.0 | Poll interval for context/handoff checks |
-| `--project-dir` | cwd | Project directory for trust dialog |
 
 The harness requires the wormlens skill to be installed (`wl --install-skill`) so
 that context tracking hooks are active.
+
+### Forwarding flags to claude
+
+Anything after a literal `--` on the command line is forwarded to the
+`claude` binary verbatim. This is the escape hatch for flags the harness
+doesn't expose itself.
+
+```bash
+# Pin a specific model
+wl launch --prompt "build X" -- --model claude-opus-4-7
+
+# Append a system prompt
+wl launch -- --append-system-prompt "be terse"
+
+# Add an extra working directory
+wl launch -- --add-dir /path/to/extra-tree
+
+# Resume a specific session UUID (the harness will use it for tracking)
+wl launch -- --session-id 11111111-1111-1111-1111-111111111111
+```
+
+If you pass `--session-id` via passthru, the harness uses your UUID for its
+own session tracking instead of generating one (the flag is not double-added
+to the launch command). Other passthru flags are not validated by the
+harness; if you pass something that disables safety checks, you own the
+risk.
 
 For debugging, the harness can also be run standalone:
 

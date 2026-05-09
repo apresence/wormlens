@@ -6,8 +6,31 @@ Semantic Versioning.
 
 ## [Unreleased]
 
+### Security
+
+- **Removed `--dangerously-skip-permissions` from the harness's hardcoded
+  `claude` invocation.** This was a smoke-test artifact that leaked into
+  shipped code; users running `wl launch` were silently getting a CC
+  instance with all tool prompts disabled. If a user genuinely wants this
+  behavior, they can pass it themselves via the new `--` passthrough
+  (and own the risk).
+- **Removed automatic `hasTrustDialogAccepted = true` write to
+  `~/.claude.json`.** This was another smoke-test artifact: the harness
+  was silently editing the user's CC config to pre-accept trust prompts
+  for the project directory. The corresponding `--project-dir` flag and
+  the `ensure_trust_dialog()` function are removed entirely. Users are
+  now prompted by CC for project trust the normal way; this is the
+  expected default and matches CC behavior outside the harness.
+
 ### Added
 
+- **`--` passthrough to `claude`.** Anything after a literal `--` on the
+  `wl launch` command line is forwarded to the `claude` binary verbatim
+  (e.g. `wl launch --prompt 'build X' -- --model claude-opus-4-7
+  --append-system-prompt 'be terse'`). If `--session-id` is passed via
+  passthru, the harness uses that UUID for its own session tracking
+  instead of generating one (and does not double-add the flag to the
+  launch command).
 - **OpenAI Codex CLI provider** (`--source codex`, source label `X`).
   Reads rollout JSONL files from `$CODEX_HOME/sessions/YYYY/MM/DD/`
   (default `~/.codex/`). Auto-detects via the first record's
