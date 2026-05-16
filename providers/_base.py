@@ -55,8 +55,14 @@ class Provider(ABC):
         """Parse a file into one or more ChatSession objects."""
 
     @abstractmethod
-    def list_sessions_metadata(self) -> list[dict]:
-        """Return metadata dicts for all discoverable sessions."""
+    def list_sessions_metadata(self, **kwargs) -> list[dict]:
+        """Return metadata dicts for all discoverable sessions.
+
+        Providers may accept optional kwargs (e.g. `paths=[...]`) to
+        enumerate sessions inside a caller-supplied file or directory
+        rather than the provider's own discovery roots. Providers that
+        don't support this can ignore kwargs.
+        """
 
     @classmethod
     @abstractmethod

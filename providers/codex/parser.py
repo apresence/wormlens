@@ -401,7 +401,7 @@ class CodexProvider(Provider):
             },
         )]
 
-    def list_sessions_metadata(self) -> list[dict]:
+    def list_sessions_metadata(self, **kwargs) -> list[dict]:
         rows: list[dict] = []
         for fpath in _find_rollouts():
             try:

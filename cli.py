@@ -178,7 +178,7 @@ Examples:
     return p
 
 
-_SOURCE_CHAR = {"cc": "C", "vscode": "V", "wl": "W", "codex": "X"}
+_SOURCE_CHAR = {"cc": "C", "vscode": "V", "wl": "W", "codex": "X", "claude_ai": "A"}
 
 
 def _print_sessions_table(rows: list[dict]):
@@ -1156,9 +1156,10 @@ def _main():
         else:
             grep_sources = [cls() for cls in PROVIDERS.values()]
 
+        explicit_paths = [Path(p) for p in args.input] if args.input else None
         all_rows = []
         for src in grep_sources:
-            all_rows.extend(src.list_sessions_metadata())
+            all_rows.extend(src.list_sessions_metadata(paths=explicit_paths))
 
         if min_turns is None and min_bytes is None:
             min_turns = 2
@@ -1200,9 +1201,10 @@ def _main():
             list_sources = [source]
         else:
             list_sources = [cls() for cls in PROVIDERS.values()]
+        explicit_paths = [Path(p) for p in args.input] if args.input else None
         rows = []
         for src in list_sources:
-            rows.extend(src.list_sessions_metadata())
+            rows.extend(src.list_sessions_metadata(paths=explicit_paths))
         if min_turns is None and min_bytes is None:
             min_turns = 2  # default: filter out noise sessions
         rows = _filter_session_rows(rows, min_turns, min_bytes)

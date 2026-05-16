@@ -539,7 +539,7 @@ class ClaudeCodeProvider(Provider):
             ))
         return sessions
 
-    def list_sessions_metadata(self) -> list[dict]:
+    def list_sessions_metadata(self, **kwargs) -> list[dict]:
         candidates = _all_session_jsonls()
         rows = []
         for fpath in candidates:

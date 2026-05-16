@@ -479,7 +479,7 @@ class WlExtractProvider(Provider):
 
         return sessions
 
-    def list_sessions_metadata(self) -> list[dict]:
+    def list_sessions_metadata(self, **kwargs) -> list[dict]:
         # Nothing to discover; users point at files explicitly.
         return []
 

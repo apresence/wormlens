@@ -366,7 +366,7 @@ class VSCodeCopilotProvider(Provider):
             metadata={"model_ids": model_ids} if model_ids else {},
         )]
 
-    def list_sessions_metadata(self) -> list[dict]:
+    def list_sessions_metadata(self, **kwargs) -> list[dict]:
         files = _find_chat_sessions()
         rows = []
         for fpath in files:
