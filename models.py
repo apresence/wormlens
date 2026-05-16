@@ -15,6 +15,7 @@ class ChatMessage:
     source_file: str = ""
     msg_type: str = "msg"
     source_line: int = 0
+    display_turn: int = 0  # stamped pre-slice so --rev / -n preserve original turn labels
     metadata: dict = field(default_factory=dict)
 
 

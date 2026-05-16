@@ -163,6 +163,17 @@ def filter_and_sort(
 
     sessions = [s for s in sessions if s.messages]
 
+    # Stamp each message with its sequential turn number BEFORE the
+    # possible -n / --rev / --tail slice. format_chat picks this up
+    # when present so the slice preserves the original turn labels
+    # (e.g. --tail 3 shows turns 25/26/27, not 0/1/2).
+    for session in sessions:
+        seq_turn = 0
+        for msg in session.messages:
+            if msg.msg_type == "msg" and msg.role == "user":
+                seq_turn += 1
+            msg.display_turn = seq_turn
+
     sessions.sort(
         key=lambda s: s.start_ts or "",
         reverse=newest_first,

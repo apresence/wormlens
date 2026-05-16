@@ -257,8 +257,10 @@ def format_md(
         for msg in display_msgs:
             if msg.msg_type == "msg" and msg.role == "user":
                 turn_num += 1
-                body_lines.append(f"### Turn {turn_num}")
+                body_lines.append(f"### Turn {msg.display_turn or turn_num}")
                 body_lines.append("")
+            if msg.display_turn:
+                turn_num = msg.display_turn
 
             text = _strip_embedded_extracts(msg.text)
             if session.source_type == "vscode" and msg.role == "assistant":
@@ -441,6 +443,9 @@ def format_chat(
 
             if uses_line_index and msg.source_line:
                 turn_num = msg.source_line
+            elif msg.display_turn:
+                # Pre-stamped in filter_and_sort, survives slicing.
+                turn_num = msg.display_turn
             else:
                 turn_num = seq_turn
 
@@ -527,6 +532,7 @@ def format_txt(sessions: list[ChatSession], recall: bool = False) -> str:
         for msg in display_msgs:
             if msg.msg_type == "msg" and msg.role == "user":
                 seq_turn += 1
+            turn_num = msg.display_turn or seq_turn
             text = _strip_embedded_extracts(msg.text)
             if msg.msg_type in _SPECIAL_RENDER:
                 spec = _SPECIAL_RENDER[msg.msg_type]
@@ -535,7 +541,7 @@ def format_txt(sessions: list[ChatSession], recall: bool = False) -> str:
                     name = msg.metadata.get("tool", "") if msg.metadata else ""
                     if name:
                         attr = f" name={name}"
-                lines.append(f"[{spec[2]} turn={seq_turn}{attr}] {text}")
+                lines.append(f"[{spec[2]} turn={turn_num}{attr}] {text}")
             else:
                 lines.append(f"[{_msg_label(msg)}] {text}")
 

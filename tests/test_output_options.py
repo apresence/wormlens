@@ -143,3 +143,52 @@ def test_resolve_source_respects_skinsuit_for_codex():
 def test_resolve_source_explicit_wins_over_skinsuit():
     with patch.dict(os.environ, {"CODEX_HOME": "/tmp/codex"}, clear=True):
         assert resolve_source("cc", None).provider_id == "cc"
+
+
+# ---- turn-label preservation across slice (--rev / -n) -----------------
+
+
+def _multi_turn_session(n_turns: int):
+    msgs = []
+    for i in range(1, n_turns + 1):
+        msgs.append(ChatMessage(role="user", text=f"q{i}", msg_type="msg", source_line=i*2-1))
+        msgs.append(ChatMessage(role="assistant", text=f"a{i}", msg_type="msg", source_line=i*2))
+    return ChatSession(
+        session_id="multi", title="m", start_ts="2026-05-01T00:00:00Z",
+        end_ts="2026-05-01T00:00:01Z", source_file="/tmp/x",
+        source_type="claude_ai",  # NOT cc/wl, so uses_line_index is False
+        messages=msgs,
+    )
+
+
+def test_tail_preserves_original_turn_labels():
+    """--rev -n 3 on a 27-turn claude_ai session must show turns 26/27/27, not 0/1/1."""
+    from wormlens.pipeline import filter_and_sort
+    sess = _multi_turn_session(27)
+    sliced = filter_and_sort([sess], FilterOpts(), limit_n=3, reverse_limit=True)
+    out = format_chat(sliced, frontmatter=False)
+    assert "turn=26" in out
+    assert "turn=27" in out
+    assert "turn=0" not in out
+    assert "turn=1>q1" not in out  # the head turn should not appear in tail
+
+
+def test_head_preserves_original_turn_labels():
+    """-n 3 on a 27-turn session shows turns 1/1/2."""
+    from wormlens.pipeline import filter_and_sort
+    sess = _multi_turn_session(27)
+    sliced = filter_and_sort([sess], FilterOpts(), limit_n=3, reverse_limit=False)
+    out = format_chat(sliced, frontmatter=False)
+    assert "turn=1>q1" in out
+    assert "turn=2>q2" in out
+
+
+def test_no_slice_does_not_set_display_turn():
+    """Without a slice, the legacy seq_turn path is exercised."""
+    from wormlens.pipeline import filter_and_sort
+    sess = _multi_turn_session(3)
+    out_sessions = filter_and_sort([sess], FilterOpts())
+    # filter_and_sort always stamps display_turn now -- this asserts it's stamped
+    assert all(m.display_turn > 0 for m in out_sessions[0].messages)
+    assert out_sessions[0].messages[0].display_turn == 1
+    assert out_sessions[0].messages[-1].display_turn == 3
