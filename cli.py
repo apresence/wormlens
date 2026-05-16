@@ -397,6 +397,17 @@ def _print_summary_stats(sessions: list, input_paths: list) -> None:
             print(f"{s.session_id:<38} {u:>6} {a:>6} {len(s.messages):>6} {sz_str:>8}")
 
 
+def _session_file_matches(path: Path, session_ids: list[str]) -> bool:
+    """Return True when a discovered session file matches a CLI session selector.
+
+    Some providers use the logical session id as the filename stem (Claude Code);
+    others embed it in a richer filename (Codex rollout-...-<session-id>.jsonl).
+    Keep prefix matching for short selectors, but do not require the stem to begin
+    with the logical id.
+    """
+    stem = path.stem
+    return any(sid and (stem.startswith(sid) or sid in stem) for sid in session_ids)
+
 def _filter_session_rows(
     rows: list[dict],
     min_turns: int | None,
@@ -1038,7 +1049,7 @@ def _do_checkpoints(args):
             all_files = src.discover_sessions(all_sessions=True)
             input_paths.extend(
                 f for f in all_files
-                if any(f.stem.startswith(sid) for sid in session_ids)
+                if _session_file_matches(f, session_ids)
             )
         if not input_paths:
             print(f"Error: no sessions found matching: {args.session}", file=sys.stderr)
@@ -1330,7 +1341,7 @@ def _main():
             all_files = src.discover_sessions(**extra)
             input_paths.extend(
                 f for f in all_files
-                if any(f.stem.startswith(sid) for sid in session_ids)
+                if _session_file_matches(f, session_ids)
             )
         if not input_paths:
             print(f"Error: no sessions found matching: {args.session}", file=sys.stderr)
