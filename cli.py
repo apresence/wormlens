@@ -1244,20 +1244,39 @@ def _main():
             parse_commands=not args.no_parse_commands,
             skip_empty=True,
         )
+        explicit_paths = [Path(p) for p in args.input] if args.input else None
+
         # Determine which sources to search
         if args.source != "auto":
             grep_sources = [source]
+        elif explicit_paths:
+            # Detect per-file rather than scanning every provider's
+            # discovery roots. Falls back to CC for files we don't
+            # recognize.
+            from .providers import detect_provider
+            seen = {}
+            for path in explicit_paths:
+                if path.is_file():
+                    cls = detect_provider(path)
+                    if cls:
+                        seen.setdefault(cls.provider_id, cls())
+            grep_sources = list(seen.values()) or [PROVIDERS["cc"]()]
         else:
             grep_sources = [cls() for cls in PROVIDERS.values()]
 
         all_sessions = []
         for src in grep_sources:
-            extra = {"all_sessions": True}
-            if src.provider_id == "vscode" and args.storage_id:
-                extra["storage_id"] = args.storage_id
-            paths = src.discover_sessions(**extra)
-            if not paths:
-                continue
+            if explicit_paths:
+                paths = [p for p in explicit_paths if p.is_file() and src.detect(p)]
+                if not paths:
+                    continue
+            else:
+                extra = {"all_sessions": True}
+                if src.provider_id == "vscode" and args.storage_id:
+                    extra["storage_id"] = args.storage_id
+                paths = src.discover_sessions(**extra)
+                if not paths:
+                    continue
             print(f"Scanning {len(paths)} file(s) ({src.provider_label})", file=sys.stderr)
             sessions = extract_sessions(src, paths, grep_opts, since_last_compact=False)
             all_sessions.extend(sessions)
