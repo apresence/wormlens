@@ -184,6 +184,7 @@ def format_md(
     frontmatter: bool = True,
     summary: bool | None = None,
     recall: bool = False,
+    max_message_bytes: int = 30000,
 ) -> str:
     """Render sessions as Markdown with optional YAML frontmatter.
 
@@ -275,8 +276,8 @@ def format_md(
                 body_lines.append(heading)
                 body_lines.append("")
                 if text:
-                    if len(text) > 30000:
-                        text = text[:30000] + "\n\n*[response truncated -- exceeded 30KB]*"
+                    if max_message_bytes and len(text) > max_message_bytes:
+                        text = text[:max_message_bytes] + f"\n\n*[response truncated -- exceeded {max_message_bytes} chars]*"
                     body_lines.append(text)
                 else:
                     body_lines.append("*[empty]*")
@@ -284,8 +285,8 @@ def format_md(
                 body_lines.append(f"**{_msg_label(msg)}:**")
                 body_lines.append("")
                 if text:
-                    if len(text) > 30000:
-                        text = text[:30000] + "\n\n*[response truncated -- exceeded 30KB]*"
+                    if max_message_bytes and len(text) > max_message_bytes:
+                        text = text[:max_message_bytes] + f"\n\n*[response truncated -- exceeded {max_message_bytes} chars]*"
                     body_lines.append(text)
                 else:
                     body_lines.append("*[empty message]*" if msg.role == "user" else "*[no response]*")
@@ -376,6 +377,8 @@ def format_chat(
     frontmatter: bool = True,
     summary: bool | None = None,
     recall: bool = False,
+    max_message_bytes: int = 30000,
+    line_numbers: bool = False,
 ) -> str:
     """Render sessions in compact XML-style chat format.
 
@@ -445,11 +448,12 @@ def format_chat(
             if session.source_type == "vscode" and msg.role == "assistant":
                 text = _cleanup_vscode_markdown(text)
 
-            if text and len(text) > 30000:
-                text = text[:30000] + "\n[truncated -- exceeded 30KB]"
+            if text and max_message_bytes and len(text) > max_message_bytes:
+                text = text[:max_message_bytes] + f"\n[truncated -- exceeded {max_message_bytes} chars]"
 
+            line_attr = f" line={msg.source_line}" if line_numbers and msg.source_line else ""
             escaped = _escape_chat_content(text) if text else ""
-            body_lines.append(f"<{tag_name} turn={turn_num}{attrs}>{escaped}")
+            body_lines.append(f"<{tag_name} turn={turn_num}{line_attr}{attrs}>{escaped}")
 
         body_lines.append("</session>")
 
@@ -552,17 +556,24 @@ def write_jsonl(
     sessions: list[ChatSession],
     out_file,
     include_ts: bool = True,
+    include_line: bool = False,
+    max_message_bytes: int = 30000,
 ):
     """Write all messages from sessions as JSONL records."""
     for session in sessions:
         for msg in session.messages:
+            text = _strip_embedded_extracts(msg.text)
+            if max_message_bytes and len(text) > max_message_bytes:
+                text = text[:max_message_bytes] + f"\n[truncated -- exceeded {max_message_bytes} chars]"
             rec = {
                 "type": msg.msg_type,
                 "from": msg.role,
-                "text": _strip_embedded_extracts(msg.text),
+                "text": text,
             }
             if include_ts and msg.timestamp:
                 rec["ts"] = msg.timestamp
+            if include_line and msg.source_line:
+                rec["line"] = msg.source_line
             if msg.metadata:
                 rec["meta"] = msg.metadata
             out_file.write(json.dumps(rec, ensure_ascii=False) + "\n")
@@ -596,6 +607,7 @@ def write_output(
                 frontmatter=meta.get("frontmatter", True),
                 summary=meta.get("summary"),
                 recall=meta.get("recall", False),
+                max_message_bytes=meta.get("max_message_bytes", 30000),
             )
             f.write(txt)
             if txt and not txt.endswith("\n"):
@@ -611,6 +623,8 @@ def write_output(
                 frontmatter=meta.get("frontmatter", True),
                 summary=meta.get("summary"),
                 recall=meta.get("recall", False),
+                max_message_bytes=meta.get("max_message_bytes", 30000),
+                line_numbers=meta.get("line_numbers", False),
             )
             f.write(txt)
             if txt and not txt.endswith("\n"):
@@ -630,7 +644,13 @@ def write_output(
                 for s in sessions
             )
         else:
-            write_jsonl(sessions, f, include_ts=not no_ts)
+            meta = md_meta or {}
+            write_jsonl(
+                sessions, f,
+                include_ts=not no_ts,
+                include_line=meta.get("line_numbers", False),
+                max_message_bytes=meta.get("max_message_bytes", 30000),
+            )
             count = sum(len(s.messages) for s in sessions)
     finally:
         if out_path:

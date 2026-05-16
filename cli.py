@@ -117,6 +117,13 @@ Examples:
                         help="Disable ANSI color codes and unicode decoration "
                              "in --doctor and --grep output. Honored automatically "
                              "when stdout is not a TTY or NO_COLOR env var is set.")
+    output.add_argument("--max-message-bytes", type=int, default=30000, metavar="N",
+                        help="Truncate any single message longer than N characters "
+                             "(default 30000). Pass 0 to disable.")
+    output.add_argument("--line-numbers", action="store_true",
+                        help="Include source line numbers (line=N attribute in chat "
+                             "format, line: N field in jsonl) for traceability back "
+                             "to the source file.")
 
     filt = p.add_argument_group("filtering")
     filt.add_argument("--thinking", action="store_true",
@@ -1186,6 +1193,9 @@ def _main():
         if not matching_rows:
             print(f"No sessions matched pattern '{args.grep}'.", file=sys.stderr)
             sys.exit(1)
+        matching_rows.sort(key=lambda r: r.get("start_ts") or "", reverse=True)
+        if args.n is not None:
+            matching_rows = matching_rows[-args.n:] if args.rev else matching_rows[:args.n]
         _print_sessions_table(matching_rows)
         return
 
@@ -1208,6 +1218,9 @@ def _main():
         if min_turns is None and min_bytes is None:
             min_turns = 2  # default: filter out noise sessions
         rows = _filter_session_rows(rows, min_turns, min_bytes)
+        rows.sort(key=lambda r: r.get("start_ts") or "", reverse=True)
+        if args.n is not None:
+            rows = rows[-args.n:] if args.rev else rows[:args.n]
         _print_sessions_table(rows)
         return
 
@@ -1375,6 +1388,8 @@ def _main():
         "frontmatter": use_frontmatter,
         "summary": args.summary,  # None = auto
         "recall": args.recall,
+        "max_message_bytes": args.max_message_bytes,
+        "line_numbers": args.line_numbers,
     }
 
     out_path = None

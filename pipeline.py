@@ -5,6 +5,7 @@ Orchestrates: discover -> parse -> filter -> sort -> limit -> output.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -13,11 +14,31 @@ from .providers import PROVIDERS, detect_provider
 from .providers._base import Provider
 
 
+def _detect_skinsuit() -> str | None:
+    """Sniff env vars to identify the calling agent runtime.
+
+    Returns a provider_id if we recognize the host CLI. Used by --recall
+    and other no-input modes so a codex agent doesn't accidentally pull
+    CC sessions just because CC is the historical default. Explicit
+    --source always wins.
+    """
+    if os.environ.get("CLAUDECODE"):
+        return "cc"
+    if os.environ.get("CODEX_HOME"):
+        return "codex"
+    if os.environ.get("TERM_PROGRAM") == "vscode":
+        return "vscode"
+    return None
+
+
 def resolve_source(source_name: str | None, input_paths: list[Path] | None) -> Provider:
     """Resolve which source backend to use.
 
-    If source_name is given (cc, vscode), use that directly.
-    Otherwise auto-detect from the first input file, or default to CC.
+    Precedence:
+      1. Explicit --source
+      2. Auto-detect from first input file's shape
+      3. Sniff calling-skinsuit env vars (CLAUDECODE, CODEX_HOME, TERM_PROGRAM)
+      4. Fall back to CC
     """
     if source_name and source_name != "auto":
         cls = PROVIDERS.get(source_name)
@@ -33,6 +54,10 @@ def resolve_source(source_name: str | None, input_paths: list[Path] | None) -> P
                 src_cls = detect_provider(path)
                 if src_cls:
                     return src_cls()
+
+    sniffed = _detect_skinsuit()
+    if sniffed and sniffed in PROVIDERS:
+        return PROVIDERS[sniffed]()
 
     return PROVIDERS["cc"]()
 
