@@ -357,6 +357,22 @@ handoff gating, checkpoint extraction, and the .wl round-trip. All fixtures are
 synthetic ASCII files under `tests/fixtures/` and `tmp_path` -- nothing touches
 your real `~/.claude` tree.
 
+## Fleet install harness check
+
+Crew deployments can run a pytest-free smoke harness against the actual shared
+`wl` command path:
+
+```bash
+wl-install-harness-check
+# or directly:
+/global/gztools/wormlens/tools/wl-install-harness-check.py
+```
+
+This verifies that `/global/crew/scripts/wl` points at the live WormLens tree,
+`wl --doctor` imports providers, `wl launch --help` reaches the harness parser,
+and `--install-skill` / `--uninstall-skill` cleanly manage a temporary project
+without touching the caller's real `~/.claude` tree.
+
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for release notes.
