@@ -86,6 +86,8 @@ Examples:
                        help="Create handoff marker from session's <wl-summary> tag (requires --session)")
     modes.add_argument("--checkpoints", action="store_true",
                        help="Extract <wl-checkpoint> tags as ordered list (one per line)")
+    modes.add_argument("-f", "--follow", action="store_true",
+                       help="Stream new records from the input file(s) as they are appended (like tail -f). Requires explicit input paths.")
 
     # Note: `wl launch [...]` is dispatched as a subcommand at the top of
     # _main(); its arguments (--prompt, --ctx-limit, --hard-kill, --grace,
@@ -1089,6 +1091,82 @@ def _do_checkpoints(args):
         print("No checkpoints found.", file=sys.stderr)
 
 
+def _do_follow(args):
+    """Stream new records from one or more transcript files (`wl -f`).
+
+    Light per-record output -- not the full session formatter -- because
+    streaming is line-oriented. Two output modes:
+      - --format jsonl: one JSON dict per line, suitable for piping
+      - any other --format: compact "[ts] role: text" line
+
+    Requires explicit input paths. Errors out if none given. SIGINT exits
+    cleanly.
+    """
+    import json as _json
+    import sys as _sys
+
+    if not args.input:
+        print("Error: -f/--follow requires at least one explicit input file",
+              file=_sys.stderr)
+        _sys.exit(2)
+
+    # Soft-import so the missing-watchdog error is informative.
+    try:
+        from .follow import follow, FollowError
+    except ImportError as e:
+        print(f"Error: {e}", file=_sys.stderr)
+        _sys.exit(1)
+
+    # Build FilterOpts from args (same path as batch mode would use).
+    if args.all:
+        args.thinking = args.tools = args.hooks = args.bash = True
+        args.code_edits = args.refs = args.teammates = True
+        args.system_msgs = True
+        args.compact_markers = True
+
+    from .models import FilterOpts as _FilterOpts
+    opts = _FilterOpts(
+        thinking=args.thinking,
+        tools=args.tools,
+        hooks=args.hooks,
+        bash=args.bash,
+        code_edits=args.code_edits,
+        refs=args.refs,
+        teammates=args.teammates,
+        system_msgs=args.system_msgs,
+        compact_markers=args.compact_markers,
+    )
+
+    fmt = args.fmt
+
+    def on_record(msg, path):
+        if fmt == "jsonl":
+            payload = {
+                "ts": msg.timestamp,
+                "role": msg.role,
+                "type": msg.msg_type,
+                "session_id": msg.session_id,
+                "source_file": msg.source_file or path,
+                "text": msg.text,
+            }
+            if msg.metadata:
+                payload["metadata"] = msg.metadata
+            print(_json.dumps(payload, ensure_ascii=False), flush=True)
+        else:
+            ts = msg.timestamp or "-"
+            print(f"[{ts}] {msg.role} ({msg.msg_type}): {msg.text}",
+                  flush=True)
+
+    source_id = args.source if args.source != "auto" else None
+    try:
+        follow(args.input, on_record, opts=opts, source=source_id)
+    except FollowError as e:
+        print(f"Error: {e}", file=_sys.stderr)
+        _sys.exit(1)
+    except KeyboardInterrupt:
+        pass
+
+
 def main():
     try:
         _main()
@@ -1129,6 +1207,10 @@ def _main():
             sys.exit(1)
         marker = Path.home() / ".claude" / ".wormlens" / ".handoff"
         _do_handoff(args.session.strip(), marker)
+        return
+
+    if args.follow:
+        _do_follow(args)
         return
 
     if args.checkpoints:

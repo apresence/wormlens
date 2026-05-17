@@ -64,6 +64,20 @@ class Provider(ABC):
         don't support this can ignore kwargs.
         """
 
+    def parse_line(self, raw_line: str, opts: FilterOpts, state: dict) -> list:
+        """Parse one raw line from a JSONL transcript into ChatMessage objects.
+
+        Streaming entry point used by wormlens.follow. The default implementation
+        raises NotImplementedError -- providers that handle line-oriented JSONL
+        (Claude Code, Codex, VS Code Copilot) override this. `state` carries
+        cross-record bookkeeping (provider-specific shape).
+
+        Return empty list for ignored or unparseable lines.
+        """
+        raise NotImplementedError(
+            f"{self.provider_id} provider does not support line streaming"
+        )
+
     @classmethod
     @abstractmethod
     def detect(cls, path: Path) -> bool:

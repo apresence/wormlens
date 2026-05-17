@@ -630,6 +630,26 @@ class ClaudeCodeProvider(Provider):
             })
         return rows
 
+    def parse_line(
+        self,
+        raw_line: str,
+        opts: FilterOpts,
+        state: dict,
+    ) -> list[ChatMessage]:
+        """Parse one JSONL line into ChatMessage objects (streaming entry).
+
+        Thin shim over _process_record. `state` carries cross-record
+        bookkeeping (e.g. bash_ids for tool_use/tool_result correlation).
+        """
+        raw_line = raw_line.strip()
+        if not raw_line:
+            return []
+        try:
+            record = json.loads(raw_line)
+        except (json.JSONDecodeError, ValueError):
+            return []
+        return _process_record(record, opts, state)
+
     @classmethod
     def detect(cls, path: Path) -> bool:
         try:
