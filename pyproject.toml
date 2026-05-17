@@ -32,6 +32,7 @@ classifiers = [
 dev = ["pytest>=7"]
 fast = ["orjson>=3"]
 follow = ["watchdog>=3"]
+tmux = ["libtmux>=0.39"]
 
 [project.scripts]
 wl = "wormlens.cli:main"
@@ -49,6 +50,7 @@ Repository = "https://github.com/apresence/wormlens"
 "wormlens.providers.vscode_copilot" = "providers/vscode_copilot"
 "wormlens.providers.wl_extract" = "providers/wl_extract"
 "wormlens.harness" = "harness"
+"wormlens.terminal" = "terminal"
 
 [tool.setuptools]
 packages = [
@@ -60,6 +62,7 @@ packages = [
     "wormlens.providers.vscode_copilot",
     "wormlens.providers.wl_extract",
     "wormlens.harness",
+    "wormlens.terminal",
 ]
 
 [tool.setuptools.package-data]
