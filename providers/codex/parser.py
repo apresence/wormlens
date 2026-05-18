@@ -406,6 +406,9 @@ class CodexProvider(Provider):
             },
         )]
 
+    def discovery_roots(self) -> list[Path]:
+        return [_get_codex_home() / "sessions"]
+
     def parse_line(
         self,
         raw_line: str,

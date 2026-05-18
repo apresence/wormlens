@@ -289,6 +289,9 @@ class VSCodeCopilotProvider(Provider):
     provider_id = "vscode"
     provider_label = "VS Code Copilot"
 
+    def discovery_roots(self) -> list[Path]:
+        return [_get_workspace_store()]
+
     def discover_sessions(self, storage_id: str | None = None, all_sessions: bool = False, **kwargs) -> list[Path]:
         return _find_chat_sessions(storage_id, all_workspaces=all_sessions)
 

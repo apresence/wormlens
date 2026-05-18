@@ -630,6 +630,9 @@ class ClaudeCodeProvider(Provider):
             })
         return rows
 
+    def discovery_roots(self) -> list[Path]:
+        return [_get_projects_dir()]
+
     def parse_line(
         self,
         raw_line: str,

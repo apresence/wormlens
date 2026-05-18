@@ -64,6 +64,14 @@ class Provider(ABC):
         don't support this can ignore kwargs.
         """
 
+    def discovery_roots(self) -> list[Path]:
+        """Return directories this provider scans for sessions.
+
+        Empty list means this provider is file-only (no auto-discovery;
+        the caller supplies a file path directly). Used by `wl --list-sources`.
+        """
+        return []
+
     def parse_line(self, raw_line: str, opts: FilterOpts, state: dict) -> list:
         """Parse one raw line from a JSONL transcript into ChatMessage objects.
 

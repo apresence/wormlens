@@ -86,6 +86,8 @@ Examples:
                        help="Create handoff marker from session's <wl-summary> tag (requires --session)")
     modes.add_argument("--checkpoints", action="store_true",
                        help="Extract <wl-checkpoint> tags as ordered list (one per line)")
+    modes.add_argument("--list-sources", action="store_true",
+                       help="Print the discovery roots (directories) each provider auto-scans for sessions. File-only providers (claude_ai, wl_extract) are noted as such.")
     modes.add_argument("-f", "--follow", action="store_true",
                        help="Stream new records from the input file(s) as they are appended (like tail -f). Requires explicit input paths.")
 
@@ -162,9 +164,9 @@ Examples:
     sel.add_argument("--index", default=None, metavar="SPEC",
                      help="Retrieve specific turns by number (e.g. 42, 42-80, 42,55,80)")
     sel.add_argument("--session", default=None, metavar="ID[,ID,...]",
-                     help="Extract specific session(s) by UUID")
+                     help="Select input file(s) by session UUID in the filename (comma-separated). Operates at the file level.")
     sel.add_argument("--session-id", default=None,
-                     help="Filter to specific sessionId within a file")
+                     help="Filter records to a specific sessionId field within the chosen file(s). Operates at the record level inside a file.")
     sel.add_argument("--skip-empty", action="store_true", default=True)
     sel.add_argument("--no-skip-empty", action="store_false", dest="skip_empty")
     sel.add_argument("--min-turns", type=int, default=None, metavar="N",
@@ -915,11 +917,11 @@ def _grep_sessions(sessions: list, pattern: str, ignore_case: bool = False,
             continue
 
         matched_sessions += 1
-        sid_short = session.session_id[:12]
+        sid_full = session.session_id
         src_label = session.source_type or "unknown"
         ts = session.start_ts[:19] if session.start_ts else ""
         title = session.metadata.get("title", "")
-        header = f"\n{c('1;36', f'{sep} {sid_short} ({src_label}) {ts}')}"
+        header = f"\n{c('1;36', f'{sep} {sid_full} ({src_label}) {ts}')}"
         if title:
             header += f" -- {title}"
         print(header)
@@ -1091,6 +1093,30 @@ def _do_checkpoints(args):
         print("No checkpoints found.", file=sys.stderr)
 
 
+def _do_list_sources(args):
+    """Print each provider's auto-discovery roots (directories).
+
+    Providers that work only on caller-supplied files (claude_ai full
+    conversation exports, wl_extract .wl/.md files) are listed with
+    a "file-only" marker instead of a directory.
+    """
+    from .providers import PROVIDERS as _PROVIDERS
+    for pid, cls in sorted(_PROVIDERS.items()):
+        try:
+            inst = cls()
+            roots = inst.discovery_roots()
+        except Exception as e:
+            print(f"{pid:20s}  (error: {e})")
+            continue
+        label = getattr(cls, "provider_label", "") or pid
+        if not roots:
+            print(f"{pid:20s}  {label}  -- file-only (pass a path)")
+            continue
+        for r in roots:
+            exists_marker = "" if r.is_dir() else "  (missing)"
+            print(f"{pid:20s}  {label}  {r}{exists_marker}")
+
+
 def _do_follow(args):
     """Stream new records from one or more transcript files (`wl -f`).
 
@@ -1158,6 +1184,31 @@ def _do_follow(args):
                   flush=True)
 
     source_id = args.source if args.source != "auto" else None
+
+    # tail -f -n N semantics: emit last N existing records, then stream.
+    # v1 implementation is O(file size) -- uses parse_file + slice. State
+    # (codex session_meta) comes for free because parse_file does the full
+    # pre-pass. For huge files this can be optimized to backward-chunk
+    # reads + a small state pre-pass, mirroring GNU tail.
+    n = args.n if args.n is not None else (args.tail if args.tail is not None else None)
+    if n is not None and n > 0:
+        from .providers import PROVIDERS as _PROVIDERS, detect_provider as _detect
+        from pathlib import Path as _Path
+        for path in args.input:
+            if source_id:
+                cls = _PROVIDERS.get(source_id)
+            else:
+                cls = _detect(_Path(path))
+            if cls is None:
+                continue
+            prov = cls()
+            sessions = prov.parse_file(_Path(path), opts)
+            msgs = []
+            for s in sessions:
+                msgs.extend(s.messages)
+            for m in msgs[-n:]:
+                on_record(m, path)
+
     try:
         follow(args.input, on_record, opts=opts, source=source_id)
     except FollowError as e:
@@ -1207,6 +1258,10 @@ def _main():
             sys.exit(1)
         marker = Path.home() / ".claude" / ".wormlens" / ".handoff"
         _do_handoff(args.session.strip(), marker)
+        return
+
+    if args.list_sources:
+        _do_list_sources(args)
         return
 
     if args.follow:
