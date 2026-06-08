@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .._base import Provider, strip_extract_bookends
+from ...config import get_config
 from ...models import ChatMessage, ChatSession, FilterOpts
 
 
@@ -252,18 +253,26 @@ def _get_workspace_store() -> Path:
     return home / ".config" / "Code" / "User" / "workspaceStorage"
 
 
+def _workspace_stores() -> list[Path]:
+    """workspaceStorage dirs to scan: the default (unless disabled) plus any
+    user-configured extra dirs. See wormlens.config."""
+    return get_config().resolve_roots("vscode", [_get_workspace_store()])
+
+
 def _find_chat_sessions(storage_id: str | None = None, all_workspaces: bool = False) -> list[Path]:
-    ws = _get_workspace_store()
-    if not ws.is_dir():
+    stores = [ws for ws in _workspace_stores() if ws.is_dir()]
+    if not stores:
         return []
 
     if storage_id:
-        chat_dir = ws / storage_id / "chatSessions"
-        if chat_dir.is_dir():
-            return sorted(chat_dir.glob("*.jsonl"))
+        for ws in stores:
+            chat_dir = ws / storage_id / "chatSessions"
+            if chat_dir.is_dir():
+                return sorted(chat_dir.glob("*.jsonl"))
         return []
 
-    candidates = sorted(ws.iterdir(), key=lambda d: d.stat().st_mtime, reverse=True)
+    candidates = [d for ws in stores for d in ws.iterdir()]
+    candidates.sort(key=lambda d: d.stat().st_mtime, reverse=True)
 
     if all_workspaces:
         all_files = []
@@ -290,7 +299,7 @@ class VSCodeCopilotProvider(Provider):
     provider_label = "VS Code Copilot"
 
     def discovery_roots(self) -> list[Path]:
-        return [_get_workspace_store()]
+        return _workspace_stores()
 
     def discover_sessions(self, storage_id: str | None = None, all_sessions: bool = False, **kwargs) -> list[Path]:
         return _find_chat_sessions(storage_id, all_workspaces=all_sessions)

@@ -63,6 +63,19 @@ Examples:
     p.add_argument("--recursive", action="store_true",
                    help="Recursively scan directories for *.jsonl files")
 
+    disco = p.add_argument_group("discovery config")
+    disco.add_argument("--config", default=None, metavar="PATH",
+                       help="Path to a wormlens config file (TOML or JSON). Overrides "
+                            "auto-discovery and $WORMLENS_CONFIG.")
+    disco.add_argument("--extra-dir", action="append", default=None, metavar="DIR",
+                       help="Additional directory to scan for sessions, on top of the "
+                            "built-in defaults. Repeatable. Each provider interprets it "
+                            "(CC: a projects/ dir; Codex: a sessions/ tree; VS Code: a "
+                            "workspaceStorage dir).")
+    disco.add_argument("--no-default-dirs", action="store_true",
+                       help="Skip the built-in default session directories; scan only "
+                            "--extra-dir / configured dirs.")
+
     modes = p.add_argument_group("modes")
     modes.add_argument("--list-sessions", action="store_true",
                        help="List available sessions with metadata")
@@ -483,6 +496,23 @@ def _run_doctor(no_color: bool = False):
             label = getattr(cls, "provider_label", pid)
             module = getattr(cls, "__module__", "?")
             print(ok(f"Provider import: {pid} ({label}) [{module}]"))
+
+    # 1b. wormlens config (extra dirs / default toggles)
+    from . import config as _config
+    cfg = _config.get_config()
+    if cfg.error:
+        print(fail(f"Config error: {cfg.error}"))
+    elif cfg.loaded_path:
+        print(ok(f"Config loaded: {cfg.loaded_path}"))
+    else:
+        print(info("Config: none (built-in defaults)"))
+    if not cfg.global_use_defaults or cfg.source_use_defaults:
+        print(info(f"Default dirs enabled globally: {cfg.global_use_defaults}"
+                   + (f"; per-source: {cfg.source_use_defaults}" if cfg.source_use_defaults else "")))
+    for pid in ("cc", "codex", "vscode"):
+        extra = cfg.extra_dirs(pid)
+        if extra:
+            print(info(f"Extra dirs [{pid}]: " + ", ".join(str(d) for d in extra)))
 
     # 2. CLAUDE_CONFIG_DIR / default ~/.claude
     claude_config = os.environ.get("CLAUDE_CONFIG_DIR")
@@ -1242,6 +1272,17 @@ def _main():
         parser.print_help()
         sys.exit(0)
     args = parser.parse_args()
+
+    # Apply discovery config (file + env + CLI overrides) before any provider
+    # discovery runs. Bad config is reported but non-fatal.
+    from . import config as _config
+    cfg = _config.configure(
+        config_path=args.config,
+        extra_dirs=args.extra_dir,
+        no_defaults=args.no_default_dirs,
+    )
+    if cfg.error:
+        print(f"Warning: config: {cfg.error}", file=sys.stderr)
 
     if args.install_skill:
         _install_skill(args.skill_target)

@@ -30,7 +30,7 @@ try:
 except ImportError:
     _HAS_ORJSON = False
 
-from .._base import Provider, strip_extract_bookends
+from .._base import Provider, session_id_matches, strip_extract_bookends
 from ...models import ChatMessage, ChatSession, FilterOpts
 
 
@@ -281,7 +281,8 @@ class ClaudeAIProvider(Provider):
 
         sessions: list[ChatSession] = []
         for conv in data:
-            if session_id_filter and (conv.get("uuid") if isinstance(conv, dict) else None) != session_id_filter:
+            conv_uuid = conv.get("uuid") if isinstance(conv, dict) else None
+            if session_id_filter and not session_id_matches(conv_uuid, session_id_filter):
                 continue
             sess = _conv_to_session(conv, path, opts)
             if sess is not None:

@@ -24,6 +24,26 @@ Semantic Versioning.
 
 ### Added
 
+- **Configurable session-discovery directories.** wormlens can now scan
+  extra directories beyond each provider's built-in defaults, and can
+  disable the defaults entirely when they don't apply. Sources, lowest
+  precedence first: a config file (TOML or JSON), the `WORMLENS_EXTRA_DIRS`
+  / `WORMLENS_NO_DEFAULTS` env vars, and the `--extra-dir` (repeatable),
+  `--no-default-dirs`, and `--config PATH` CLI flags. Config files are
+  auto-discovered from `./.wormlens.{toml,json}`,
+  `$XDG_CONFIG_HOME/wormlens/config.{toml,json}`, and
+  `~/.claude/.wormlens/config.{toml,json}` (or pointed at via
+  `$WORMLENS_CONFIG`). Extra dirs are interpreted per provider (Claude
+  Code: a `projects/` dir; Codex: a `sessions/` tree; VS Code: a
+  `workspaceStorage` dir) and can be scoped to one provider via a
+  `[sources.<id>]` table. `--doctor` reports the loaded config, the
+  default-dirs toggle, and the resolved extra dirs. (TOML config needs
+  Python 3.11+; JSON works on all supported versions.)
+- **Partial session-id matching.** Record-level `--session-id` (and the
+  internal session filter used by every provider) now accepts a shortened
+  id and prefix-matches it against the full UUID, git-style -- so a 6-hex
+  prefix selects the full session. File-level `--session` selection
+  already matched on substrings; the two are now consistent.
 - **`--` passthrough to `claude`.** Anything after a literal `--` on the
   `wl launch` command line is forwarded to the `claude` binary verbatim
   (e.g. `wl launch --prompt 'build X' -- --model claude-opus-4-7

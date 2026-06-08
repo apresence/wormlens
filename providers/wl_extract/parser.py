@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .._base import Provider, strip_extract_bookends
+from .._base import Provider, session_id_matches, strip_extract_bookends
 from ...models import ChatMessage, ChatSession, FilterOpts
 
 
@@ -467,13 +467,13 @@ class WlExtractProvider(Provider):
                 s = _parse_chat_session(attrs, inner, str(path), meta)
                 if s is None:
                     continue
-                if session_id_filter and s.session_id != session_id_filter:
+                if session_id_filter and not session_id_matches(s.session_id, session_id_filter):
                     continue
                 sessions.append(s)
         else:
             md_sessions = _parse_md_sessions(body, str(path), meta)
             for s in md_sessions:
-                if session_id_filter and s.session_id != session_id_filter:
+                if session_id_filter and not session_id_matches(s.session_id, session_id_filter):
                     continue
                 sessions.append(s)
 

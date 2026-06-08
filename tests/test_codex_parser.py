@@ -283,6 +283,16 @@ def test_session_id_filter_miss_returns_empty():
     assert sessions == []
 
 
+def test_session_id_filter_partial_prefix_matches():
+    """A short hex prefix selects the full-UUID codex session."""
+    sessions = CodexProvider().parse_file(
+        _fixture("01_pure_conversation"),
+        FilterOpts(),
+        session_id_filter="019e02",
+    )
+    assert len(sessions) == 1
+
+
 # ---- multi-content message rendering -------------------------------------
 
 

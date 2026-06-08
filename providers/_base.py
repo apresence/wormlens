@@ -16,6 +16,20 @@ _EXTRACT_COMMENT_RE = re.compile(
 _EXTRACT_CLOSE_RE = re.compile(r'\n?</wormlens-extract>\s*')
 
 
+def session_id_matches(actual: str | None, selector: str | None) -> bool:
+    """True when `selector` identifies the session `actual`.
+
+    A None/empty selector matches everything. Otherwise an exact match wins;
+    failing that, `selector` is treated as a shortened id and prefix-matched
+    against the full id -- so a 6-hex prefix selects the full UUID, git-style.
+    """
+    if not selector:
+        return True
+    if not actual:
+        return False
+    return actual == selector or actual.startswith(selector)
+
+
 def strip_extract_bookends(text: str) -> str:
     """Remove wormlens-extract wrapper tags while preserving inner content.
 

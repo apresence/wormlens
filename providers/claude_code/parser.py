@@ -14,7 +14,8 @@ import sys
 from collections import OrderedDict
 from pathlib import Path
 
-from .._base import Provider, strip_extract_bookends
+from .._base import Provider, session_id_matches, strip_extract_bookends
+from ...config import get_config
 from ...models import ChatMessage, ChatSession, FilterOpts
 
 
@@ -58,6 +59,7 @@ _CONTINUATION_PREFIX = "This session is being continued from a previous conversa
 
 
 def _get_projects_dir() -> Path:
+    """The built-in default `projects` dir ($CLAUDE_CONFIG_DIR or ~/.claude)."""
     config_dir = os.environ.get("CLAUDE_CONFIG_DIR")
     if config_dir:
         projects = Path(config_dir) / "projects"
@@ -67,17 +69,23 @@ def _get_projects_dir() -> Path:
     return Path(home) / ".claude" / "projects"
 
 
+def _projects_dirs() -> list[Path]:
+    """All `projects` dirs to scan: the default (unless disabled) plus any
+    user-configured extra dirs. See wormlens.config."""
+    return get_config().resolve_roots("cc", [_get_projects_dir()])
+
+
 def _all_session_jsonls() -> list[Path]:
-    projects_dir = _get_projects_dir()
-    if not projects_dir.is_dir():
-        return []
     candidates = []
-    for project_dir in projects_dir.iterdir():
-        if not project_dir.is_dir():
+    for projects_dir in _projects_dirs():
+        if not projects_dir.is_dir():
             continue
-        for f in project_dir.iterdir():
-            if f.suffix == ".jsonl" and f.is_file():
-                candidates.append(f)
+        for project_dir in projects_dir.iterdir():
+            if not project_dir.is_dir():
+                continue
+            for f in project_dir.iterdir():
+                if f.suffix == ".jsonl" and f.is_file():
+                    candidates.append(f)
     candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     return candidates
 
@@ -474,7 +482,9 @@ class ClaudeCodeProvider(Provider):
                     continue
                 if not isinstance(record, dict):
                     continue
-                if session_id_filter and record.get("sessionId") != session_id_filter:
+                if session_id_filter and not session_id_matches(
+                    record.get("sessionId"), session_id_filter
+                ):
                     continue
 
                 rec_type = record.get("type", "")
@@ -631,7 +641,7 @@ class ClaudeCodeProvider(Provider):
         return rows
 
     def discovery_roots(self) -> list[Path]:
-        return [_get_projects_dir()]
+        return _projects_dirs()
 
     def parse_line(
         self,

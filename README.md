@@ -137,6 +137,68 @@ Bare `wl` (no args) prints help. For extraction, always pass `--session
 
 Auto-detection examines the first record in the file. `--list-sessions` scans all providers and shows a one-character source column (S). Timestamps are UTC.
 
+## Discovery Configuration
+
+By default each provider scans the built-in location in the table above. You
+can add **extra directories** on top of the defaults, or **turn the defaults
+off** when they don't apply (e.g. sessions copied to a backup host, or a
+shared/mounted `projects` tree that isn't under `$CLAUDE_CONFIG_DIR`).
+
+Three ways to configure, lowest precedence first:
+
+**1. Config file** (TOML or JSON). Auto-discovered from the first of:
+
+```
+./.wormlens.toml            ./.wormlens.json
+$XDG_CONFIG_HOME/wormlens/config.{toml,json}   (default ~/.config/wormlens)
+~/.claude/.wormlens/config.{toml,json}
+```
+
+or point at one explicitly with `--config PATH` (or `$WORMLENS_CONFIG`):
+
+```toml
+# Disable EVERY provider's built-in default roots. Per-source toggles win.
+use_defaults = true
+
+# Extra dirs handed to every provider (each interprets them its own way).
+extra_dirs = ["/mnt/backup/.claude/projects"]
+
+[sources.cc]                 # claude code  (aliases: claude_code, claude-code)
+extra_dirs = ["/mnt/host/.claude/projects"]
+use_defaults = true          # scan the default ~/.claude/projects too
+
+[sources.codex]              # openai codex
+extra_dirs = ["/mnt/host/.codex/sessions"]
+
+[sources.vscode]             # vs code copilot
+use_defaults = false         # only the dirs listed here
+```
+
+Each extra dir is interpreted in that provider's own terms: Claude Code wants
+a `projects/` dir (containing per-project subdirs of `*.jsonl`), Codex wants a
+`sessions/` tree (recursively globbed for `rollout-*.jsonl`), VS Code wants a
+`workspaceStorage` dir. Dir strings support `~` and `$VAR`. (TOML config needs
+Python 3.11+; JSON works everywhere.)
+
+**2. Environment:**
+
+```
+WORMLENS_EXTRA_DIRS=/dir/a:/dir/b   # os.pathsep- or comma-separated
+WORMLENS_NO_DEFAULTS=1              # disable built-in defaults
+WORMLENS_CONFIG=/path/to/config.toml
+```
+
+**3. CLI flags** (highest precedence):
+
+```
+wl --extra-dir /mnt/host/.claude/projects --list-sessions
+wl --no-default-dirs --extra-dir /mnt/backup/projects --session 9fcf59
+wl --config ./my-wormlens.toml --doctor
+```
+
+`--doctor` reports the loaded config, the default-dirs toggle, and the
+resolved extra dirs per provider.
+
 ## Filtering
 
 By default, only user and assistant messages are included. Add flags to include more:
@@ -189,8 +251,8 @@ The default. Designed for LLM context injection -- maximum signal, minimum chrom
 | `-t N` / `--tail N` | Last N records (shorthand for `--rev -n N`) |
 | `--newest-first` | Reverse chronological order |
 | `--index SPEC` | Subaddress retrieval -- extract specific turns or ranges (e.g. `5`, `5-10`, `5,8,12`) |
-| `--session ID[,ID]` | Extract specific session(s) by UUID |
-| `--session-id ID` | Filter to specific sessionId within a file |
+| `--session ID[,ID]` | Extract specific session(s) by UUID (accepts a partial id, e.g. a 6-hex prefix) |
+| `--session-id ID` | Filter to specific sessionId within a file (partial / prefix id accepted, git-style) |
 | `--min-turns N` | Minimum user+assistant turns (default: 2 for `--list-sessions`) |
 | `--min-size SIZE` | Minimum file size, e.g. `10KB`, `1MB` |
 

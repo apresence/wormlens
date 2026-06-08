@@ -23,7 +23,8 @@ import json
 import os
 from pathlib import Path
 
-from .._base import Provider, strip_extract_bookends
+from .._base import Provider, session_id_matches, strip_extract_bookends
+from ...config import get_config
 from ...models import ChatMessage, ChatSession, FilterOpts
 
 
@@ -45,15 +46,20 @@ def _get_codex_home() -> Path:
     return Path.home() / ".codex"
 
 
+def _session_roots() -> list[Path]:
+    """Sessions dirs to scan: the default $CODEX_HOME/sessions (unless disabled)
+    plus any user-configured extra dirs. See wormlens.config."""
+    return get_config().resolve_roots("codex", [_get_codex_home() / "sessions"])
+
+
 def _find_rollouts(all_sessions: bool = False) -> list[Path]:
-    """Return rollouts under $CODEX_HOME/sessions, sorted newest first."""
-    home = _get_codex_home()
-    sessions_dir = home / "sessions"
+    """Return rollouts under the configured session roots, sorted newest first."""
     files: list[Path] = []
-    if sessions_dir.is_dir():
-        files.extend(sessions_dir.rglob("rollout-*.jsonl"))
-    if all_sessions:
-        archived = home / "archived_sessions"
+    for sessions_dir in _session_roots():
+        if sessions_dir.is_dir():
+            files.extend(sessions_dir.rglob("rollout-*.jsonl"))
+    if all_sessions and get_config().use_defaults("codex"):
+        archived = _get_codex_home() / "archived_sessions"
         if archived.is_dir():
             files.extend(archived.rglob("rollout-*.jsonl"))
     files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
@@ -366,7 +372,9 @@ class CodexProvider(Provider):
         if not state.get("session_id"):
             state["session_id"] = path.stem
 
-        if session_id_filter and state["session_id"] != session_id_filter:
+        if session_id_filter and not session_id_matches(
+            state["session_id"], session_id_filter
+        ):
             return []
 
         # Recall mode: slice records to start AFTER the last compacted record.
@@ -407,7 +415,7 @@ class CodexProvider(Provider):
         )]
 
     def discovery_roots(self) -> list[Path]:
-        return [_get_codex_home() / "sessions"]
+        return _session_roots()
 
     def parse_line(
         self,
