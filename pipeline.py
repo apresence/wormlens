@@ -145,6 +145,42 @@ def extract_sessions(
     return all_sessions
 
 
+def dedupe_sessions(sessions: list[ChatSession], keep: str = "newest") -> list[ChatSession]:
+    """Collapse duplicate sessions that came from more than one file.
+
+    A "duplicate" is the same (source_type, session_id) appearing in multiple
+    source files -- e.g. a backup copy plus the live one when both are on the
+    discovery path. `keep`:
+
+      "newest" -- keep the copy whose source file has the latest mtime (default)
+      "oldest" -- keep the earliest copy
+      "all"    -- no dedup (return as-is)
+
+    First-seen order is preserved; callers sort afterwards.
+    """
+    if keep == "all" or len(sessions) < 2:
+        return sessions
+
+    def _mtime(s: ChatSession) -> float:
+        try:
+            return os.path.getmtime(s.source_file) if s.source_file else 0.0
+        except OSError:
+            return 0.0
+
+    best: dict[tuple, ChatSession] = {}
+    order: list[tuple] = []
+    for s in sessions:
+        key = (s.source_type, s.session_id)
+        if key not in best:
+            best[key] = s
+            order.append(key)
+        elif keep == "newest" and _mtime(s) >= _mtime(best[key]):
+            best[key] = s
+        elif keep == "oldest" and _mtime(s) < _mtime(best[key]):
+            best[key] = s
+    return [best[k] for k in order]
+
+
 def filter_and_sort(
     sessions: list[ChatSession],
     opts: FilterOpts,

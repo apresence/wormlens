@@ -70,8 +70,8 @@ def _get_projects_dir() -> Path:
 
 
 def _projects_dirs() -> list[Path]:
-    """All `projects` dirs to scan: the default (unless disabled) plus any
-    user-configured extra dirs. See wormlens.config."""
+    """Built-in default `projects` dir(s) to scan (none if defaults disabled).
+    User-supplied extra session files come from globs instead. See wormlens.config."""
     return get_config().resolve_roots("cc", [_get_projects_dir()])
 
 
@@ -86,8 +86,17 @@ def _all_session_jsonls() -> list[Path]:
             for f in project_dir.iterdir():
                 if f.suffix == ".jsonl" and f.is_file():
                     candidates.append(f)
-    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    return candidates
+    # Explicit user globs (config extra_globs) -- matched .jsonl files directly.
+    candidates.extend(get_config().extra_files("cc"))
+    seen: set[str] = set()
+    uniq: list[Path] = []
+    for f in candidates:
+        key = str(f)
+        if key not in seen:
+            seen.add(key)
+            uniq.append(f)
+    uniq.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return uniq
 
 
 def _guess_project_path(session_file: Path) -> str:

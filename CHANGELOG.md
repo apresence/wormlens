@@ -6,6 +6,31 @@ Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-08
+
+### Changed
+
+- **BREAKING: extra discovery paths are now globs, not directories.** The
+  `extra_dirs` config key, `--extra-dir` flag, and `WORMLENS_EXTRA_DIRS` env
+  var (added in 0.3.0) are replaced by `extra_globs` / `--extra-glob` /
+  `WORMLENS_EXTRA_GLOBS`. Extras are always explicit glob patterns matched
+  against `.jsonl` files — no more "is this a projects dir or a pattern?"
+  guessing. A flat folder is `DIR/*.jsonl`; a Claude Code tree is
+  `DIR/*/*.jsonl`; recurse with `DIR/**/*.jsonl`. A bare directory path now
+  matches nothing (and `--doctor` flags it). Built-in defaults are unchanged
+  and still provider-structured; `use_defaults` / `--no-default-dirs` still
+  toggle them.
+
+### Added
+
+- **`--keep-dup newest|oldest|all`** — collapse duplicate sessions when the
+  same `(source, session id)` is discovered in more than one file (e.g. a
+  backup tree plus the live one). Default `newest` keeps the copy with the
+  latest file mtime; `oldest` the earliest; `all` disables de-dup. Applies to
+  `--list-sessions`, extraction, `--grep`, and `--checkpoints`.
+- **`--doctor`** now prints each configured glob with its match count and
+  loudly flags patterns that matched zero files.
+
 ## [0.3.0] - 2026-06-08
 
 ### Security

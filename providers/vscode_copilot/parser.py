@@ -254,16 +254,28 @@ def _get_workspace_store() -> Path:
 
 
 def _workspace_stores() -> list[Path]:
-    """workspaceStorage dirs to scan: the default (unless disabled) plus any
-    user-configured extra dirs. See wormlens.config."""
+    """Built-in default workspaceStorage dir(s) to scan (none if defaults disabled).
+    User-supplied extra session files come from globs instead. See wormlens.config."""
     return get_config().resolve_roots("vscode", [_get_workspace_store()])
+
+
+def _merge_extra(structural: list[Path]) -> list[Path]:
+    """Merge explicit user-glob session files with structural results, de-duped."""
+    seen: set[str] = set()
+    out: list[Path] = []
+    for p in structural + get_config().extra_files("vscode"):
+        key = str(p)
+        if key not in seen:
+            seen.add(key)
+            out.append(p)
+    out.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return out
 
 
 def _find_chat_sessions(storage_id: str | None = None, all_workspaces: bool = False) -> list[Path]:
     stores = [ws for ws in _workspace_stores() if ws.is_dir()]
-    if not stores:
-        return []
 
+    # storage_id is a precise default-store lookup; globs don't apply.
     if storage_id:
         for ws in stores:
             chat_dir = ws / storage_id / "chatSessions"
@@ -274,21 +286,22 @@ def _find_chat_sessions(storage_id: str | None = None, all_workspaces: bool = Fa
     candidates = [d for ws in stores for d in ws.iterdir()]
     candidates.sort(key=lambda d: d.stat().st_mtime, reverse=True)
 
+    structural: list[Path] = []
     if all_workspaces:
-        all_files = []
         for d in candidates:
             chat_dir = d / "chatSessions"
             if chat_dir.is_dir():
-                all_files.extend(chat_dir.glob("*.jsonl"))
-        return sorted(all_files, key=lambda p: p.stat().st_mtime, reverse=True)
+                structural.extend(chat_dir.glob("*.jsonl"))
+    else:
+        for d in candidates:
+            chat_dir = d / "chatSessions"
+            if chat_dir.is_dir():
+                files = sorted(chat_dir.glob("*.jsonl"))
+                if files:
+                    structural = files
+                    break
 
-    for d in candidates:
-        chat_dir = d / "chatSessions"
-        if chat_dir.is_dir():
-            files = sorted(chat_dir.glob("*.jsonl"))
-            if files:
-                return files
-    return []
+    return _merge_extra(structural)
 
 
 # -- Provider class ---------------------------------------------------------

@@ -19,6 +19,7 @@ from . import __version__
 from .formatters import write_output
 from .models import FilterOpts
 from .pipeline import (
+    dedupe_sessions,
     extract_sessions,
     filter_and_sort,
     resolve_input_files,
@@ -67,14 +68,18 @@ Examples:
     disco.add_argument("--config", default=None, metavar="PATH",
                        help="Path to a wormlens config file (TOML or JSON). Overrides "
                             "auto-discovery and $WORMLENS_CONFIG.")
-    disco.add_argument("--extra-dir", action="append", default=None, metavar="DIR",
-                       help="Additional directory to scan for sessions, on top of the "
-                            "built-in defaults. Repeatable. Each provider interprets it "
-                            "(CC: a projects/ dir; Codex: a sessions/ tree; VS Code: a "
-                            "workspaceStorage dir).")
+    disco.add_argument("--extra-glob", action="append", default=None, metavar="GLOB",
+                       help="Glob pattern for additional session files, on top of the "
+                            "built-in defaults. Repeatable. Always a glob, never a bare "
+                            "dir: a folder of session files is GLOB/*.jsonl; recurse with "
+                            "GLOB/**/*.jsonl. Matched .jsonl files are scanned directly.")
     disco.add_argument("--no-default-dirs", action="store_true",
-                       help="Skip the built-in default session directories; scan only "
-                            "--extra-dir / configured dirs.")
+                       help="Skip the built-in default session locations; scan only "
+                            "--extra-glob / configured globs.")
+    disco.add_argument("--keep-dup", choices=["newest", "oldest", "all"], default="newest",
+                       help="When the same session id appears in more than one file "
+                            "(e.g. a backup copy + the live one), keep which? "
+                            "newest (default) / oldest copy by file mtime, or all.")
 
     modes = p.add_argument_group("modes")
     modes.add_argument("--list-sessions", action="store_true",
@@ -425,6 +430,36 @@ def _session_file_matches(path: Path, session_ids: list[str]) -> bool:
     stem = path.stem
     return any(sid and (stem.startswith(sid) or sid in stem) for sid in session_ids)
 
+def _dedupe_rows(rows: list[dict], keep: str) -> list[dict]:
+    """Collapse --list-sessions rows that share a (source_type, session_id).
+
+    Same as pipeline.dedupe_sessions but for metadata rows: handles the same
+    session appearing in a backup copy and the live file. keep =
+    newest|oldest (by file mtime) | all. First-seen order preserved.
+    """
+    if keep == "all" or len(rows) < 2:
+        return rows
+
+    def _mtime(row: dict) -> float:
+        try:
+            return os.path.getmtime(row["file"]) if row.get("file") else 0.0
+        except OSError:
+            return 0.0
+
+    best: dict[tuple, dict] = {}
+    order: list[tuple] = []
+    for row in rows:
+        key = (row.get("source_type"), row.get("session_id"))
+        if key not in best:
+            best[key] = row
+            order.append(key)
+        elif keep == "newest" and _mtime(row) >= _mtime(best[key]):
+            best[key] = row
+        elif keep == "oldest" and _mtime(row) < _mtime(best[key]):
+            best[key] = row
+    return [best[k] for k in order]
+
+
 def _filter_session_rows(
     rows: list[dict],
     min_turns: int | None,
@@ -510,9 +545,12 @@ def _run_doctor(no_color: bool = False):
         print(info(f"Default dirs enabled globally: {cfg.global_use_defaults}"
                    + (f"; per-source: {cfg.source_use_defaults}" if cfg.source_use_defaults else "")))
     for pid in ("cc", "codex", "vscode"):
-        extra = cfg.extra_dirs(pid)
-        if extra:
-            print(info(f"Extra dirs [{pid}]: " + ", ".join(str(d) for d in extra)))
+        for pat, files in cfg.glob_matches(pid):
+            if files:
+                print(ok(f"Glob [{pid}] {pat} -> {len(files)} file(s)"))
+            else:
+                print(fail(f"Glob [{pid}] {pat} -> 0 files (check the pattern: "
+                           f"a folder needs /*.jsonl or /**/*.jsonl)"))
 
     # 2. CLAUDE_CONFIG_DIR / default ~/.claude
     claude_config = os.environ.get("CLAUDE_CONFIG_DIR")
@@ -1112,6 +1150,7 @@ def _do_checkpoints(args):
         session_id_filter=args.session_id,
         since_last_compact=False,
     )
+    sessions = dedupe_sessions(sessions, args.keep_dup)
 
     total = 0
     for session in sessions:
@@ -1278,7 +1317,7 @@ def _main():
     from . import config as _config
     cfg = _config.configure(
         config_path=args.config,
-        extra_dirs=args.extra_dir,
+        extra_globs=args.extra_glob,
         no_defaults=args.no_default_dirs,
     )
     if cfg.error:
@@ -1407,6 +1446,7 @@ def _main():
         if min_turns is None and min_bytes is None:
             min_turns = 2  # default: filter out noise sessions
         rows = _filter_session_rows(rows, min_turns, min_bytes)
+        rows = _dedupe_rows(rows, args.keep_dup)
         rows.sort(key=lambda r: r.get("start_ts") or "", reverse=True)
         if args.n is not None:
             rows = rows[-args.n:] if args.rev else rows[:args.n]
@@ -1469,6 +1509,8 @@ def _main():
             print(f"Scanning {len(paths)} file(s) ({src.provider_label})", file=sys.stderr)
             sessions = extract_sessions(src, paths, grep_opts, since_last_compact=False)
             all_sessions.extend(sessions)
+
+        all_sessions = dedupe_sessions(all_sessions, args.keep_dup)
 
         total_matches = _grep_sessions(
             all_sessions, args.grep,
@@ -1549,6 +1591,8 @@ def _main():
         session_id_filter=args.session_id,
         since_last_compact=use_compact_filter,
     )
+
+    sessions = dedupe_sessions(sessions, args.keep_dup)
 
     sessions = filter_and_sort(
         sessions, opts,

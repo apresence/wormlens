@@ -47,8 +47,8 @@ def _get_codex_home() -> Path:
 
 
 def _session_roots() -> list[Path]:
-    """Sessions dirs to scan: the default $CODEX_HOME/sessions (unless disabled)
-    plus any user-configured extra dirs. See wormlens.config."""
+    """Built-in default sessions dir ($CODEX_HOME/sessions), or none if disabled.
+    User-supplied extra session files come from globs instead. See wormlens.config."""
     return get_config().resolve_roots("codex", [_get_codex_home() / "sessions"])
 
 
@@ -62,8 +62,17 @@ def _find_rollouts(all_sessions: bool = False) -> list[Path]:
         archived = _get_codex_home() / "archived_sessions"
         if archived.is_dir():
             files.extend(archived.rglob("rollout-*.jsonl"))
-    files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    return files
+    # Explicit user globs (config extra_globs) -- matched .jsonl files directly.
+    files.extend(get_config().extra_files("codex"))
+    seen: set[str] = set()
+    uniq: list[Path] = []
+    for f in files:
+        key = str(f)
+        if key not in seen:
+            seen.add(key)
+            uniq.append(f)
+    uniq.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return uniq
 
 
 def _content_text(content) -> str:

@@ -1,15 +1,26 @@
 """Wormlens runtime configuration.
 
-Lets users point wormlens at additional session directories (beyond each
-provider's built-in defaults) and, when the defaults don't apply, switch
-them off entirely.
+Two independent knobs over session discovery:
+
+  * ``use_defaults`` -- whether to scan each provider's built-in default
+    location (e.g. ``~/.claude/projects`` for Claude Code). Turn it off when
+    the defaults don't apply.
+  * ``extra_globs`` -- explicit glob patterns pointing at additional session
+    files. **These are always globs, never structural roots** -- what the
+    pattern matches is exactly what gets scanned. No magic, no "is this a
+    directory or a pattern" guessing.
+
+Defaults are provider-structured (CC knows its ``projects/*/​*.jsonl`` layout);
+extras are pure globs you write yourself. So to add a backup CC tree you spell
+out the layout: ``"/backup/.claude/projects/*/*.jsonl"``. A flat folder of
+session files is just ``"/dump/*.jsonl"``; recurse with ``"/arch/**/*.jsonl"``.
 
 Configuration is merged from these sources, lowest precedence first:
 
   1. built-in defaults             (each provider's home/env-derived root)
   2. a config file                 (TOML or JSON)
-  3. environment variables         (WORMLENS_EXTRA_DIRS, WORMLENS_NO_DEFAULTS)
-  4. CLI flags                     (--extra-dir, --no-default-dirs, --config)
+  3. environment variables         (WORMLENS_EXTRA_GLOBS, WORMLENS_NO_DEFAULTS)
+  4. CLI flags                     (--extra-glob, --no-default-dirs, --config)
 
 Config file search order (first existing file wins). If $WORMLENS_CONFIG is
 set it takes precedence and is used verbatim:
@@ -24,24 +35,25 @@ Schema (TOML shown; JSON uses the same keys):
     # Disable EVERY provider's built-in default roots. Per-source toggles win.
     use_defaults = true
 
-    # Extra dirs handed to every provider (each interprets them its own way).
-    extra_dirs = ["/extra/projects"]
+    # Globs handed to every provider (matched .jsonl files are scanned).
+    extra_globs = ["/dump/*.jsonl"]
 
     [sources.cc]                     # claude code  (aliases: claude_code, claude-code)
-    extra_dirs = ["/mnt/host/.claude/projects"]
+    extra_globs = ["/backup/.claude/projects/*/*.jsonl"]
     use_defaults = true
 
     [sources.codex]                  # openai codex (alias: openai-codex)
-    extra_dirs = []
+    extra_globs = ["/mnt/host/.codex/sessions/**/rollout-*.jsonl"]
 
     [sources.vscode]                 # vs code copilot (alias: vscode-copilot)
     use_defaults = false
 
-Dir strings support ``~`` and ``$VAR`` expansion.
+Glob strings support ``~`` and ``$VAR`` expansion and ``**`` recursion.
 """
 
 from __future__ import annotations
 
+import glob as _glob
 import json
 import os
 import sys
@@ -51,6 +63,11 @@ try:  # TOML is stdlib only on 3.11+; JSON is the universal fallback.
     import tomllib as _tomllib
 except ModuleNotFoundError:  # pragma: no cover - exercised on <3.11
     _tomllib = None
+
+
+# Only .jsonl session files are picked up from a glob (cc/codex/vscode all use
+# JSONL). claude.ai / wl-extract are file-only providers fed via CLI args.
+_SESSION_SUFFIX = ".jsonl"
 
 
 # Maps friendly config keys onto canonical provider ids.
@@ -71,12 +88,12 @@ def _canon_source(key: str) -> str:
     return _SOURCE_ALIASES.get(key, key)
 
 
-def _expand(p: str) -> Path:
-    return Path(os.path.expanduser(os.path.expandvars(p)))
+def _expand(p: str) -> str:
+    return os.path.expanduser(os.path.expandvars(p))
 
 
-def _as_dir_list(value) -> list[Path]:
-    """Coerce a config/env value into a list of expanded Paths."""
+def _as_glob_list(value) -> list[str]:
+    """Coerce a config/env value into a list of expanded glob strings."""
     if value is None:
         return []
     if isinstance(value, str):
@@ -134,15 +151,15 @@ class WormlensConfig:
         *,
         global_use_defaults: bool = True,
         source_use_defaults: dict | None = None,
-        generic_extra: list[Path] | None = None,
-        source_extra: dict | None = None,
+        generic_globs: list[str] | None = None,
+        source_globs: dict | None = None,
         loaded_path: Path | None = None,
         error: str | None = None,
     ):
         self.global_use_defaults = global_use_defaults
         self.source_use_defaults = source_use_defaults or {}
-        self.generic_extra = generic_extra or []
-        self.source_extra = source_extra or {}
+        self.generic_globs = generic_globs or []
+        self.source_globs = source_globs or {}
         self.loaded_path = loaded_path
         self.error = error
 
@@ -152,27 +169,53 @@ class WormlensConfig:
             return self.source_use_defaults[provider_id]
         return self.global_use_defaults
 
-    def extra_dirs(self, provider_id: str) -> list[Path]:
-        """Extra discovery dirs for a provider (generic + source-specific)."""
-        merged = list(self.generic_extra) + list(self.source_extra.get(provider_id, []))
+    def globs(self, provider_id: str) -> list[str]:
+        """Glob patterns for a provider (generic + source-specific), de-duped."""
+        merged = list(self.generic_globs) + list(self.source_globs.get(provider_id, []))
+        seen: set[str] = set()
+        out: list[str] = []
+        for g in merged:
+            if g not in seen:
+                seen.add(g)
+                out.append(g)
+        return out
+
+    def glob_matches(self, provider_id: str) -> list[tuple[str, list[Path]]]:
+        """For each provider glob, return (pattern, matched session files).
+
+        A pattern is expanded with recursive ``**`` support; only existing
+        ``.jsonl`` files are kept. Empty match lists are preserved so callers
+        (e.g. ``--doctor``) can flag patterns that matched nothing.
+        """
+        out: list[tuple[str, list[Path]]] = []
+        for pat in self.globs(provider_id):
+            files = sorted(
+                Path(m)
+                for m in _glob.glob(pat, recursive=True)
+                if Path(m).is_file() and Path(m).suffix == _SESSION_SUFFIX
+            )
+            out.append((pat, files))
+        return out
+
+    def extra_files(self, provider_id: str) -> list[Path]:
+        """All session files matched by the provider's globs, de-duped."""
         seen: set[str] = set()
         out: list[Path] = []
-        for d in merged:
-            key = str(d)
-            if key not in seen:
-                seen.add(key)
-                out.append(d)
+        for _pat, files in self.glob_matches(provider_id):
+            for f in files:
+                key = str(f)
+                if key not in seen:
+                    seen.add(key)
+                    out.append(f)
         return out
 
     def resolve_roots(self, provider_id: str, default_roots: list[Path]) -> list[Path]:
-        """Combine default roots (if enabled) with extra dirs, de-duped, order-preserving."""
-        roots: list[Path] = []
-        if self.use_defaults(provider_id):
-            roots.extend(default_roots)
-        roots.extend(self.extra_dirs(provider_id))
+        """The provider's built-in default roots, or none if disabled. De-duped."""
+        if not self.use_defaults(provider_id):
+            return []
         seen: set[str] = set()
         out: list[Path] = []
-        for r in roots:
+        for r in default_roots:
             key = str(r)
             if key not in seen:
                 seen.add(key)
@@ -184,14 +227,14 @@ class WormlensConfig:
         cls,
         *,
         config_path: str | os.PathLike | None = None,
-        cli_extra_dirs: list[str] | None = None,
+        cli_extra_globs: list[str] | None = None,
         cli_no_defaults: bool = False,
     ) -> "WormlensConfig":
         """Build config from file + environment + CLI overrides."""
         global_use_defaults = True
         source_use_defaults: dict = {}
-        generic_extra: list[Path] = []
-        source_extra: dict = {}
+        generic_globs: list[str] = []
+        source_globs: dict = {}
         loaded_path: Path | None = None
         error: str | None = None
 
@@ -215,7 +258,7 @@ class WormlensConfig:
             loaded_path = path
             if "use_defaults" in data:
                 global_use_defaults = bool(data["use_defaults"])
-            generic_extra.extend(_as_dir_list(data.get("extra_dirs")))
+            generic_globs.extend(_as_glob_list(data.get("extra_globs")))
             sources = data.get("sources") or {}
             if isinstance(sources, dict):
                 for raw_key, scfg in sources.items():
@@ -224,28 +267,28 @@ class WormlensConfig:
                     pid = _canon_source(raw_key)
                     if "use_defaults" in scfg:
                         source_use_defaults[pid] = bool(scfg["use_defaults"])
-                    dirs = _as_dir_list(scfg.get("extra_dirs"))
-                    if dirs:
-                        source_extra.setdefault(pid, []).extend(dirs)
+                    globs = _as_glob_list(scfg.get("extra_globs"))
+                    if globs:
+                        source_globs.setdefault(pid, []).extend(globs)
 
         # -- 2. environment -------------------------------------------------
-        generic_extra.extend(_as_dir_list(os.environ.get("WORMLENS_EXTRA_DIRS")))
+        generic_globs.extend(_as_glob_list(os.environ.get("WORMLENS_EXTRA_GLOBS")))
         env_no_def = os.environ.get("WORMLENS_NO_DEFAULTS")
         if env_no_def is not None and env_no_def.strip().lower() in ("1", "true", "yes", "on"):
             global_use_defaults = False
 
         # -- 3. CLI ---------------------------------------------------------
-        if cli_extra_dirs:
-            for d in cli_extra_dirs:
-                generic_extra.extend(_as_dir_list(d))
+        if cli_extra_globs:
+            for g in cli_extra_globs:
+                generic_globs.extend(_as_glob_list(g))
         if cli_no_defaults:
             global_use_defaults = False
 
         return cls(
             global_use_defaults=global_use_defaults,
             source_use_defaults=source_use_defaults,
-            generic_extra=generic_extra,
-            source_extra=source_extra,
+            generic_globs=generic_globs,
+            source_globs=source_globs,
             loaded_path=loaded_path,
             error=error,
         )
@@ -265,14 +308,14 @@ def get_config() -> WormlensConfig:
 def configure(
     *,
     config_path: str | os.PathLike | None = None,
-    extra_dirs: list[str] | None = None,
+    extra_globs: list[str] | None = None,
     no_defaults: bool = False,
 ) -> WormlensConfig:
     """(Re)load config applying CLI overrides. Call once from main()."""
     global _CONFIG
     _CONFIG = WormlensConfig.load(
         config_path=config_path,
-        cli_extra_dirs=extra_dirs,
+        cli_extra_globs=extra_globs,
         cli_no_defaults=no_defaults,
     )
     return _CONFIG

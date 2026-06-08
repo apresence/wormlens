@@ -140,9 +140,25 @@ Auto-detection examines the first record in the file. `--list-sessions` scans al
 ## Discovery Configuration
 
 By default each provider scans the built-in location in the table above. You
-can add **extra directories** on top of the defaults, or **turn the defaults
-off** when they don't apply (e.g. sessions copied to a backup host, or a
-shared/mounted `projects` tree that isn't under `$CLAUDE_CONFIG_DIR`).
+can point wormlens at **extra session files via glob patterns**, and/or **turn
+the defaults off** when they don't apply (sessions copied to a backup host, a
+mounted tree that isn't under `$CLAUDE_CONFIG_DIR`, etc.).
+
+**Extras are always globs — never bare directories.** There's no "is this a dir
+or a pattern" guessing to trip over: a plain path like `/mnt/host/.claude/projects`
+matches the *directory itself* (not a `.jsonl` file) and finds nothing. Spell out
+what you want:
+
+| You want… | Glob |
+|-----------|------|
+| a flat folder of session files | `/dump/*.jsonl` |
+| a Claude Code projects tree | `/backup/.claude/projects/*/*.jsonl` |
+| everything underneath, recursively | `/archive/**/*.jsonl` |
+| one exact file | `/path/to/session.jsonl` |
+
+`**` recursion, `~`, and `$VAR` all expand. `--doctor` prints each glob with its
+match count and **loudly flags any that matched zero files** (usually a missing
+`/*.jsonl`).
 
 Three ways to configure, lowest precedence first:
 
@@ -160,44 +176,55 @@ or point at one explicitly with `--config PATH` (or `$WORMLENS_CONFIG`):
 # Disable EVERY provider's built-in default roots. Per-source toggles win.
 use_defaults = true
 
-# Extra dirs handed to every provider (each interprets them its own way).
-extra_dirs = ["/mnt/backup/.claude/projects"]
+# Globs handed to every provider (matched .jsonl files are scanned).
+extra_globs = ["/dump/*.jsonl"]
 
 [sources.cc]                 # claude code  (aliases: claude_code, claude-code)
-extra_dirs = ["/mnt/host/.claude/projects"]
+extra_globs = ["/backup/.claude/projects/*/*.jsonl"]
 use_defaults = true          # scan the default ~/.claude/projects too
 
 [sources.codex]              # openai codex
-extra_dirs = ["/mnt/host/.codex/sessions"]
+extra_globs = ["/mnt/host/.codex/sessions/**/rollout-*.jsonl"]
 
 [sources.vscode]             # vs code copilot
-use_defaults = false         # only the dirs listed here
+use_defaults = false         # only the globs listed here
 ```
 
-Each extra dir is interpreted in that provider's own terms: Claude Code wants
-a `projects/` dir (containing per-project subdirs of `*.jsonl`), Codex wants a
-`sessions/` tree (recursively globbed for `rollout-*.jsonl`), VS Code wants a
-`workspaceStorage` dir. Dir strings support `~` and `$VAR`. (TOML config needs
-Python 3.11+; JSON works everywhere.)
+(TOML config needs Python 3.11+; JSON works everywhere.)
 
 **2. Environment:**
 
 ```
-WORMLENS_EXTRA_DIRS=/dir/a:/dir/b   # os.pathsep- or comma-separated
-WORMLENS_NO_DEFAULTS=1              # disable built-in defaults
+WORMLENS_EXTRA_GLOBS=/a/*.jsonl:/b/**/*.jsonl   # os.pathsep- or comma-separated
+WORMLENS_NO_DEFAULTS=1                          # disable built-in defaults
 WORMLENS_CONFIG=/path/to/config.toml
 ```
 
 **3. CLI flags** (highest precedence):
 
 ```
-wl --extra-dir /mnt/host/.claude/projects --list-sessions
-wl --no-default-dirs --extra-dir /mnt/backup/projects --session 9fcf59
+wl --extra-glob '/backup/.claude/projects/*/*.jsonl' --list-sessions
+wl --no-default-dirs --extra-glob '/archive/**/*.jsonl' --session 9fcf59
 wl --config ./my-wormlens.toml --doctor
 ```
 
-`--doctor` reports the loaded config, the default-dirs toggle, and the
-resolved extra dirs per provider.
+`--doctor` reports the loaded config, the default-dirs toggle, and every glob's
+match count.
+
+### De-duplicating across sources
+
+Pulling in backup trees means the **same session can show up more than once**
+(a backup copy + the live file). By default wormlens collapses those, keeping
+the copy whose file was modified most recently:
+
+```
+--keep-dup newest   # default: keep the freshest copy (by file mtime)
+--keep-dup oldest   # keep the earliest copy
+--keep-dup all      # don't de-dup; show every copy
+```
+
+De-dup is keyed on `(source, session id)`, so distinct sessions are never
+merged. Applies to `--list-sessions`, extraction, `--grep`, and `--checkpoints`.
 
 ## Filtering
 
