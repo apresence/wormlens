@@ -6,6 +6,8 @@ Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-08
+
 ### Security
 
 - **Removed `--dangerously-skip-permissions` from the harness's hardcoded
