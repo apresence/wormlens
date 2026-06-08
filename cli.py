@@ -71,8 +71,10 @@ Examples:
     disco.add_argument("--extra-glob", action="append", default=None, metavar="GLOB",
                        help="Glob pattern for additional session files, on top of the "
                             "built-in defaults. Repeatable. Always a glob, never a bare "
-                            "dir: a folder of session files is GLOB/*.jsonl; recurse with "
-                            "GLOB/**/*.jsonl. Matched .jsonl files are scanned directly.")
+                            "dir: a folder of session files is DIR/*.jsonl; recurse with "
+                            "DIR/**/*.jsonl. The glob is the only filter — every file it "
+                            "matches is scanned (a trailing /** or /**/ matches dirs; add "
+                            "/* or /*.jsonl to match files).")
     disco.add_argument("--no-default-dirs", action="store_true",
                        help="Skip the built-in default session locations; scan only "
                             "--extra-glob / configured globs.")

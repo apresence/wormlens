@@ -7,8 +7,9 @@ Two independent knobs over session discovery:
     the defaults don't apply.
   * ``extra_globs`` -- explicit glob patterns pointing at additional session
     files. **These are always globs, never structural roots** -- what the
-    pattern matches is exactly what gets scanned. No magic, no "is this a
-    directory or a pattern" guessing.
+    pattern matches is exactly what gets scanned, and the glob is the only
+    filter (``*.json`` matches ``.json``, ``*`` matches everything). No magic,
+    no "is this a directory or a pattern" guessing, no extension second-guessing.
 
 Defaults are provider-structured (CC knows its ``projects/*/​*.jsonl`` layout);
 extras are pure globs you write yourself. So to add a backup CC tree you spell
@@ -63,11 +64,6 @@ try:  # TOML is stdlib only on 3.11+; JSON is the universal fallback.
     import tomllib as _tomllib
 except ModuleNotFoundError:  # pragma: no cover - exercised on <3.11
     _tomllib = None
-
-
-# Only .jsonl session files are picked up from a glob (cc/codex/vscode all use
-# JSONL). claude.ai / wl-extract are file-only providers fed via CLI args.
-_SESSION_SUFFIX = ".jsonl"
 
 
 # Maps friendly config keys onto canonical provider ids.
@@ -181,18 +177,20 @@ class WormlensConfig:
         return out
 
     def glob_matches(self, provider_id: str) -> list[tuple[str, list[Path]]]:
-        """For each provider glob, return (pattern, matched session files).
+        """For each provider glob, return (pattern, matched files).
 
-        A pattern is expanded with recursive ``**`` support; only existing
-        ``.jsonl`` files are kept. Empty match lists are preserved so callers
-        (e.g. ``--doctor``) can flag patterns that matched nothing.
+        The pattern is honored literally (recursive ``**`` supported): every
+        existing FILE it matches is kept -- the glob is the filter, not us, so
+        ``*.jsonl`` / ``*.json`` / ``*`` each do exactly what you wrote.
+        Directories are skipped (they can't be parsed). Files the chosen
+        provider can't parse yield no sessions (parse returns nothing) rather
+        than being dropped here. Empty lists are preserved so ``--doctor`` can
+        flag patterns that matched nothing.
         """
         out: list[tuple[str, list[Path]]] = []
         for pat in self.globs(provider_id):
             files = sorted(
-                Path(m)
-                for m in _glob.glob(pat, recursive=True)
-                if Path(m).is_file() and Path(m).suffix == _SESSION_SUFFIX
+                Path(m) for m in _glob.glob(pat, recursive=True) if Path(m).is_file()
             )
             out.append((pat, files))
         return out

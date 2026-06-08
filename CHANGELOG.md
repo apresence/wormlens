@@ -6,6 +6,19 @@ Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-06-08
+
+### Fixed
+
+- **`extra_globs` now honor the pattern's extension** instead of silently
+  keeping only `.jsonl`. A `*.json` (or `*`) glob matched files but an internal
+  `.jsonl`-only filter dropped them before discovery, so e.g.
+  `.../projects/**` / `.../projects/**/*.json` found nothing when the session
+  files weren't named `.jsonl`. The glob is now the only filter — every matched
+  file is scanned (directories skipped); the provider parses what it
+  recognizes. (A trailing `/**/` still matches directories only, by glob rule —
+  use `/**` or `/**/*` to match files.)
+
 ## [0.4.0] - 2026-06-08
 
 ### Changed

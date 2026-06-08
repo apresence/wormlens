@@ -207,6 +207,25 @@ def test_glob_dedups_across_patterns(tmp_path):
     assert [p.name for p in cfg.extra_files("cc")] == ["dup.jsonl"]
 
 
+def test_glob_honors_non_jsonl_extension(tmp_path):
+    """The glob is the only filter -- a *.json pattern matches .json files
+    (regression: an internal .jsonl-only filter used to silently drop them)."""
+    _touch_jsonl(tmp_path / "p" / "a.json")
+    _touch_jsonl(tmp_path / "p" / "b.jsonl")
+    cfg = wlconfig.WormlensConfig.load(cli_extra_globs=[str(tmp_path / "p" / "*.json")])
+    assert [p.name for p in cfg.extra_files("cc")] == ["a.json"]
+
+
+def test_recursive_star_matches_all_files_not_just_jsonl(tmp_path):
+    """`**` honors every file it matches (mixed extensions), skipping dirs."""
+    _touch_jsonl(tmp_path / "proj" / "x.jsonl")
+    _touch_jsonl(tmp_path / "proj" / "y.json")
+    (tmp_path / "proj" / "readme.md").write_text("x", encoding="utf-8")
+    cfg = wlconfig.WormlensConfig.load(cli_extra_globs=[str(tmp_path / "proj" / "**")])
+    names = {p.name for p in cfg.extra_files("cc")}
+    assert names == {"x.jsonl", "y.json", "readme.md"}  # files only, no dirs
+
+
 # -- provider integration (claude code) --------------------------------------
 
 

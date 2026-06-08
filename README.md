@@ -176,7 +176,8 @@ or point at one explicitly with `--config PATH` (or `$WORMLENS_CONFIG`):
 # Disable EVERY provider's built-in default roots. Per-source toggles win.
 use_defaults = true
 
-# Globs handed to every provider (matched .jsonl files are scanned).
+# Globs handed to every provider (every matched file is scanned -- the
+# glob is the only filter; provider parses what it recognizes).
 extra_globs = ["/dump/*.jsonl"]
 
 [sources.cc]                 # claude code  (aliases: claude_code, claude-code)
