@@ -5,4 +5,4 @@ try:
 except ImportError:
     # No stamp present (fresh checkout, hooks not run yet, or stripped install).
     # Fall back to the release literal kept in sync with pyproject.toml.
-    __version__ = "0.4.1"
+    __version__ = "0.4.2"

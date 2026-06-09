@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wormlens"
-version = "0.4.1"
+version = "0.4.2"
 description = "Lossless episodic memory for Claude Code, OpenAI Codex CLI, VS Code Copilot, and claude.ai web exports"
 readme = "README.md"
 license = {text = "MIT"}

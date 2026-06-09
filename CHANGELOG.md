@@ -6,6 +6,42 @@ Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-06-09
+
+### Fixed
+
+- **Session discovery scope is now identical across every command.** Each
+  provider's `list_sessions_metadata` used to *re-discover* sessions with its
+  own narrower defaults, so `--list-sessions` (and `--list-sessions --grep`)
+  diverged from what `--grep` / extraction actually scanned: VS Code Copilot
+  returned only a **single** workspace (not all of them), and Codex **dropped
+  archived** rollouts. Discovery now happens once, centrally, and the same file
+  set feeds every command — `list_sessions_metadata` became a pure summarizer
+  over caller-supplied paths. `--list-sessions <path>` now also summarizes the
+  passed file for VS Code / Codex (previously ignored).
+- **`wl --list-sessions | head` no longer crashes** with a `charmap` /
+  `UnicodeEncodeError` on Windows. stdout/stderr are forced to UTF-8
+  (`errors="replace"`) at startup, so the box-drawing rules and emoji in the
+  table survive a redirect or pipe (which default to cp1252).
+
+### Added
+
+- **`--last N`** — a uniform session-scope selector available on every command:
+  operate on the N most-recently-active sessions (by file mtime), across all
+  selected sources. It is orthogonal to `-n` and composes with it: `--last`
+  picks *which conversations*, `-n` caps *how much prints*
+  (`wl --grep foo --last 4 -n 10` = search my 4 newest sessions, show ≤10 hits).
+  Default scope: `1` for extract / `--recall` / `--checkpoints`, all sessions
+  for `--grep` / `--list-sessions`. Explicit `--session` always wins.
+- **`--recall` flood-control.** `-n N` on recall now means "last N turns" (tail)
+  — the lever for pulling just-the-recent context. `--recall --last N` (N>1)
+  warns that it will load multiple full sessions, and an oversized recall
+  payload prints a size warning to stderr. `--stats` composes with recall
+  (`wl --recall --last 4 --stats`) as the look-before-you-load path.
+- **Config `extra_globs` / `use_defaults` now apply to every command** — the
+  central-discovery win. Additional configured sources surface in
+  `--list-sessions` and `--checkpoints`, not just `--grep`.
+
 ## [0.4.1] - 2026-06-08
 
 ### Fixed

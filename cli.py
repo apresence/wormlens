@@ -51,6 +51,9 @@ Examples:
   wl --index 42,55,80                  # specific turns
   wl --index 42-80,90-100             # multiple ranges
   wl --summary-stats                   # session stats without output
+  wl --last 4 --stats                  # stats for the 4 newest sessions
+  wl --grep deploy --last 3            # grep only the 3 newest sessions
+  wl --list-sessions --last 10         # the 10 most-recent sessions
   wl launch --prompt "build X"         # outer-loop harness for continuity
         """,
     )
@@ -175,6 +178,13 @@ Examples:
     sel = p.add_argument_group("record selection")
     sel.add_argument("-n", type=int, default=None, metavar="N",
                      help="Limit to N output records")
+    sel.add_argument("--last", type=int, default=None, metavar="N",
+                     help="Operate on the N most-recently-active sessions (by "
+                          "file mtime), across all selected sources. SESSION "
+                          "scope, orthogonal to -n (output cap): --last picks "
+                          "which conversations, -n caps how much prints. "
+                          "Default: 1 for extract/recall/checkpoints, all for "
+                          "grep/--list-sessions. Explicit --session overrides.")
     sel.add_argument("--rev", action="store_true",
                      help="Reverse: take last N (requires -n)")
     sel.add_argument("-t", "--tail", type=int, default=None, metavar="N",
@@ -210,6 +220,10 @@ Examples:
 
 
 _SOURCE_CHAR = {"cc": "C", "vscode": "V", "wl": "W", "codex": "X", "claude_ai": "A"}
+
+# Recall payload above this many chars (~200k tokens at ~3 chars/token) trips a
+# stderr flood warning. Advisory only; recall still proceeds.
+_RECALL_WARN_CHARS = 600_000
 
 
 def _print_sessions_table(rows: list[dict]):
@@ -479,6 +493,90 @@ def _filter_session_rows(
                 continue
         filtered.append(row)
     return filtered
+
+
+def _safe_mtime(p: Path) -> float:
+    try:
+        return os.path.getmtime(p)
+    except OSError:
+        return 0.0
+
+
+def _apply_last(pairs: list[tuple], last: int | None) -> list[tuple]:
+    """Keep only the `last` newest files by mtime across ALL providers.
+
+    `pairs` is a list of (provider, [paths]). Returns the same shape, but
+    pruned to the `last` most-recently-modified files globally (not per
+    provider), preserving provider grouping and first-seen provider order.
+    `last=None` (or <= 0) is a no-op -- the whole set passes through.
+    """
+    if last is None or last <= 0:
+        return pairs
+    flat = [(src, p) for src, paths in pairs for p in paths]
+    flat.sort(key=lambda sp: _safe_mtime(sp[1]), reverse=True)
+    flat = flat[:last]
+    grouped: dict[str, tuple] = {}
+    for src, p in flat:
+        if src.provider_id not in grouped:
+            grouped[src.provider_id] = (src, [])
+        grouped[src.provider_id][1].append(p)
+    return list(grouped.values())
+
+
+def _collect_session_paths(
+    args,
+    sources: list,
+    *,
+    all_sessions: bool,
+    last_default: int | None = None,
+) -> list[tuple]:
+    """The single discovery path shared by list-sessions, grep, checkpoints,
+    and --last extract/recall.
+
+    Returns a list of (provider, [paths]). Selection is identical regardless
+    of which command calls it -- that is the whole point: session/source scope
+    must not depend on the command. It honors:
+
+      * explicit input paths   -- detected per file and grouped by provider
+                                   (restricted to the allowed source set)
+      * --storage-id           -- threaded to the vscode provider
+      * config extra_globs / use_defaults  -- via each provider's
+                                   discover_sessions(), so additional sources
+                                   surface everywhere, not just in grep
+      * --last N               -- newest N files across sources; falls back to
+                                   `last_default` when --last is not passed
+                                   (1 for the recovery-family commands, None
+                                   for grep/list-sessions).
+
+    Explicit --session selection is handled by callers BEFORE this helper and
+    always wins over --last.
+    """
+    allowed = {s.provider_id for s in sources}
+    effective_last = args.last if args.last is not None else last_default
+    explicit_paths = [Path(p) for p in args.input] if args.input else None
+    pairs: list[tuple] = []
+    if explicit_paths:
+        from .providers import detect_provider
+        grouped: dict[str, tuple] = {}
+        for path in explicit_paths:
+            if not path.is_file():
+                continue
+            cls = detect_provider(path)
+            if cls is None or cls.provider_id not in allowed:
+                continue
+            if cls.provider_id not in grouped:
+                grouped[cls.provider_id] = (cls(), [])
+            grouped[cls.provider_id][1].append(path)
+        pairs = list(grouped.values())
+    else:
+        for src in sources:
+            extra = {"all_sessions": all_sessions}
+            if src.provider_id == "vscode" and args.storage_id:
+                extra["storage_id"] = args.storage_id
+            paths = list(src.discover_sessions(**extra))
+            if paths:
+                pairs.append((src, paths))
+    return _apply_last(pairs, effective_last)
 
 
 # -- Doctor diagnostics -------------------------------------------------------
@@ -1113,54 +1211,56 @@ def _do_checkpoints(args):
     )
 
     if args.session:
+        # Explicit --session wins over --last: select exactly the matched files.
         session_ids = [s.strip() for s in args.session.split(",")]
         if args.source == "auto":
             sources_to_search = [cls() for cls in PROVIDERS.values()]
         else:
             sources_to_search = [source]
-        input_paths = []
+        pairs: list[tuple] = []
         for src in sources_to_search:
-            all_files = src.discover_sessions(all_sessions=True)
-            input_paths.extend(
-                f for f in all_files
+            matched = [
+                f for f in src.discover_sessions(all_sessions=True)
                 if _session_file_matches(f, session_ids)
-            )
-        if not input_paths:
+            ]
+            if matched:
+                pairs.append((src, matched))
+        if not pairs:
             print(f"Error: no sessions found matching: {args.session}", file=sys.stderr)
             sys.exit(1)
-        if args.source == "auto":
-            from .providers import detect_provider
-            detected = detect_provider(input_paths[0])
-            if detected:
-                source = detected()
+    elif args.input:
+        # Explicit input paths: detect + group centrally (no --last default).
+        pairs = _collect_session_paths(args, [source], all_sessions=True)
     else:
-        has_explicit_input = bool(args.input)
-        recovery_mode = (not has_explicit_input) and (not args.full)
-        extra = {}
-        if source.provider_id == "vscode":
-            extra["storage_id"] = args.storage_id
-        input_paths = resolve_input_files(
-            args.input or None, source,
-            recovery=recovery_mode,
-            recursive=args.recursive,
-            **extra,
-        )
+        # Default checkpoints scope: the most-recent session (--last 1), same
+        # current-session default as extract/recall. --last N broadens it.
+        list_sources = [source] if args.source != "auto" else [source]
+        pairs = _collect_session_paths(args, list_sources, all_sessions=True, last_default=1)
+    if not pairs:
+        print("No checkpoints found.", file=sys.stderr)
+        return
 
     opts = FilterOpts()
-    sessions = extract_sessions(
-        source, input_paths, opts,
-        session_id_filter=args.session_id,
-        since_last_compact=False,
-    )
-    sessions = dedupe_sessions(sessions, args.keep_dup)
+    collected: list[tuple] = []
+    for src, paths in pairs:
+        sessions = extract_sessions(
+            src, paths, opts,
+            session_id_filter=args.session_id,
+            since_last_compact=False,
+        )
+        sessions = dedupe_sessions(sessions, args.keep_dup)
+        for session in sessions:
+            for cp in session.checkpoints:
+                collected.append((cp["turn"], cp["text"]))
 
-    total = 0
-    for session in sessions:
-        for cp in session.checkpoints:
-            print(f"[turn {cp['turn']}] {cp['text']}")
-            total += 1
+    # -n caps the printed checkpoint lines; keep the most recent N (tail).
+    if args.n is not None:
+        collected = collected[-args.n:]
 
-    if total == 0:
+    for turn, text in collected:
+        print(f"[turn {turn}] {text}")
+
+    if not collected:
         print("No checkpoints found.", file=sys.stderr)
 
 
@@ -1289,7 +1389,24 @@ def _do_follow(args):
         pass
 
 
+def _force_utf8_stdio() -> None:
+    """Force UTF-8 on stdout/stderr so piped output never hits a charmap crash.
+
+    On Windows a redirected/piped stdout defaults to cp1252, which raises
+    UnicodeEncodeError the moment we print the box-drawing rules / emoji that
+    show up in --list-sessions and --grep (e.g. `wl --list-sessions | head`).
+    reconfigure() exists on 3.7+; errors="replace" degrades gracefully instead
+    of aborting. Wrapped streams that lack reconfigure are left as-is.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
 def main():
+    _force_utf8_stdio()
     try:
         _main()
     except WlFormatError as e:
@@ -1372,6 +1489,25 @@ def _main():
     if args.rev and args.n is None:
         parser.error("--rev requires -n")
 
+    if args.last is not None and args.last <= 0:
+        parser.error("--last requires a positive integer")
+
+    # recall: -n means "last N turns" (tail) -- the flood-control lever for
+    # pulling recent context, not the first N. Everywhere else -n keeps its
+    # existing first-N (or --rev/--tail) semantics, untouched.
+    if args.recall and args.n is not None:
+        args.rev = True
+
+    # recall pulls transcripts straight into the agent's context; more than one
+    # session risks flooding it. Default stays --last 1; >1 is allowed but loud.
+    if args.recall and args.last is not None and args.last > 1:
+        print(
+            f"Warning: --recall --last {args.last} will load {args.last} full "
+            f"sessions into context (flood risk). Narrow with a smaller --last "
+            f"or trim each with -n; use --stats to look before you load.",
+            file=sys.stderr,
+        )
+
     source = resolve_source(
         args.source if args.source != "auto" else None,
         [Path(p) for p in args.input] if args.input else None,
@@ -1393,10 +1529,12 @@ def _main():
         else:
             grep_sources = [cls() for cls in PROVIDERS.values()]
 
-        explicit_paths = [Path(p) for p in args.input] if args.input else None
+        # Same central discovery as plain grep/list-sessions, so the grepped
+        # session set is identical to what those commands would select.
+        pairs = _collect_session_paths(args, grep_sources, all_sessions=True)
         all_rows = []
-        for src in grep_sources:
-            all_rows.extend(src.list_sessions_metadata(paths=explicit_paths))
+        for src, paths in pairs:
+            all_rows.extend(src.list_sessions_metadata(paths=paths))
 
         if min_turns is None and min_bytes is None:
             min_turns = 2
@@ -1441,10 +1579,10 @@ def _main():
             list_sources = [source]
         else:
             list_sources = [cls() for cls in PROVIDERS.values()]
-        explicit_paths = [Path(p) for p in args.input] if args.input else None
+        pairs = _collect_session_paths(args, list_sources, all_sessions=True)
         rows = []
-        for src in list_sources:
-            rows.extend(src.list_sessions_metadata(paths=explicit_paths))
+        for src, paths in pairs:
+            rows.extend(src.list_sessions_metadata(paths=paths))
         if min_turns is None and min_bytes is None:
             min_turns = 2  # default: filter out noise sessions
         rows = _filter_session_rows(rows, min_turns, min_bytes)
@@ -1475,39 +1613,18 @@ def _main():
             parse_commands=not args.no_parse_commands,
             skip_empty=True,
         )
-        explicit_paths = [Path(p) for p in args.input] if args.input else None
-
-        # Determine which sources to search
+        # Determine which sources to search; explicit-path detection and
+        # --last slicing are handled centrally so grep selects exactly the
+        # same sessions list-sessions would.
         if args.source != "auto":
             grep_sources = [source]
-        elif explicit_paths:
-            # Detect per-file rather than scanning every provider's
-            # discovery roots. Falls back to CC for files we don't
-            # recognize.
-            from .providers import detect_provider
-            seen = {}
-            for path in explicit_paths:
-                if path.is_file():
-                    cls = detect_provider(path)
-                    if cls:
-                        seen.setdefault(cls.provider_id, cls())
-            grep_sources = list(seen.values()) or [PROVIDERS["cc"]()]
         else:
             grep_sources = [cls() for cls in PROVIDERS.values()]
 
+        pairs = _collect_session_paths(args, grep_sources, all_sessions=True)
+
         all_sessions = []
-        for src in grep_sources:
-            if explicit_paths:
-                paths = [p for p in explicit_paths if p.is_file() and src.detect(p)]
-                if not paths:
-                    continue
-            else:
-                extra = {"all_sessions": True}
-                if src.provider_id == "vscode" and args.storage_id:
-                    extra["storage_id"] = args.storage_id
-                paths = src.discover_sessions(**extra)
-                if not paths:
-                    continue
+        for src, paths in pairs:
             print(f"Scanning {len(paths)} file(s) ({src.provider_label})", file=sys.stderr)
             sessions = extract_sessions(src, paths, grep_opts, since_last_compact=False)
             all_sessions.extend(sessions)
@@ -1575,6 +1692,18 @@ def _main():
             if detected:
                 source = detected()
         use_compact_filter = False
+    elif args.last is not None and not has_explicit_input:
+        # Explicit --last N: pull the N most-recently-active sessions of the
+        # resolved source (newest by mtime), instead of the recovery default
+        # of a single session. Compact-filtering only makes sense for the
+        # single-session recovery view, so it's off here.
+        pairs = _collect_session_paths(args, [source], all_sessions=True)
+        input_paths = [p for _src, paths in pairs for p in paths]
+        if not input_paths:
+            print(f"Error: no session files found for {source.provider_label}", file=sys.stderr)
+            sys.exit(1)
+        print(f"Selected {len(input_paths)} session file(s) ({source.provider_label})", file=sys.stderr)
+        use_compact_filter = False
     else:
         recovery_mode = (not has_explicit_input) and (not args.full)
         extra = {}
@@ -1622,6 +1751,20 @@ def _main():
     if args.summary_stats:
         _print_summary_stats(sessions, input_paths)
         return
+
+    # -- Recall flood warning --------------------------------------------------
+    # recall dumps straight into the agent's context; a large payload can blow
+    # the window. Advisory only (stderr), never blocks. --stats above is the
+    # look-before-you-load path; -n / --last are the levers to narrow.
+    if args.recall:
+        total_chars = sum(len(m.text) for s in sessions for m in s.messages)
+        if total_chars > _RECALL_WARN_CHARS:
+            print(
+                f"Warning: recall payload is large (~{total_chars // 1000}k chars, "
+                f"~{total_chars // 3000}k tokens). Narrow with -n (last N turns) "
+                f"or --stats to inspect first.",
+                file=sys.stderr,
+            )
 
     project = ""
     if sessions:

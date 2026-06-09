@@ -558,8 +558,12 @@ class ClaudeCodeProvider(Provider):
             ))
         return sessions
 
-    def list_sessions_metadata(self, **kwargs) -> list[dict]:
-        candidates = _all_session_jsonls()
+    def list_sessions_metadata(self, paths: list[Path] | None = None, **kwargs) -> list[dict]:
+        # Pure summarizer over caller-supplied paths (central CLI discovery).
+        # The bare fallback matches discover_sessions(all_sessions=True); cc
+        # was already consistent, but accept paths so every provider shares one
+        # contract.
+        candidates = list(paths) if paths is not None else _all_session_jsonls()
         rows = []
         for fpath in candidates:
             size = fpath.stat().st_size

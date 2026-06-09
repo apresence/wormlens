@@ -447,9 +447,13 @@ class CodexProvider(Provider):
             return []
         return _process_record_codex(rec, opts, state)
 
-    def list_sessions_metadata(self, **kwargs) -> list[dict]:
+    def list_sessions_metadata(self, paths: list[Path] | None = None, **kwargs) -> list[dict]:
+        # Pure summarizer over caller-supplied paths (central CLI discovery).
+        # The bare fallback now passes all_sessions=True so archived rollouts
+        # are included, matching discover_sessions -- the old no-arg call
+        # dropped archived_sessions, diverging from grep/extract.
         rows: list[dict] = []
-        for fpath in _find_rollouts():
+        for fpath in (list(paths) if paths is not None else _find_rollouts(all_sessions=True)):
             try:
                 lines = fpath.read_text(encoding="utf-8", errors="replace").splitlines()
             except OSError:

@@ -274,7 +274,8 @@ The default. Designed for LLM context injection -- maximum signal, minimum chrom
 
 | Flag | Effect |
 |------|--------|
-| `-n N` | Limit to N output records |
+| `-n N` | Limit to N output records (on `--recall`, the *last* N — tail) |
+| `--last N` | Operate on the N most-recently-active sessions (by mtime), across all selected sources. Orthogonal to `-n`: `--last` picks *which conversations*, `-n` caps *how much prints*. Default: 1 for extract/`--recall`/`--checkpoints`, all for `--grep`/`--list-sessions`. `--session` overrides. |
 | `--rev` | Reverse: take last N (requires `-n`) |
 | `-t N` / `--tail N` | Last N records (shorthand for `--rev -n N`) |
 | `--newest-first` | Reverse chronological order |

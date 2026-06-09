@@ -391,8 +391,14 @@ class VSCodeCopilotProvider(Provider):
             metadata={"model_ids": model_ids} if model_ids else {},
         )]
 
-    def list_sessions_metadata(self, **kwargs) -> list[dict]:
-        files = _find_chat_sessions()
+    def list_sessions_metadata(self, paths: list[Path] | None = None, **kwargs) -> list[dict]:
+        # Pure summarizer: when the caller supplies paths (the central CLI
+        # discovery does), summarize exactly those files -- do NOT re-discover
+        # here, or list-sessions would diverge from grep/extract. The bare
+        # fallback (direct API use) now scans ALL workspaces, matching
+        # discover_sessions(all_sessions=True); the old no-arg call defaulted
+        # to a single workspace, which is the asymmetry this release fixes.
+        files = list(paths) if paths is not None else _find_chat_sessions(all_workspaces=True)
         rows = []
         for fpath in files:
             state = _load_session_state(fpath)
